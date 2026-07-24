@@ -145,6 +145,16 @@ const allEnv = z.object({
   MAX_ASSET_SIZE_MB: z.coerce.number().default(50),
   HTML_CONTENT_SIZE_INLINE_THRESHOLD_BYTES: z.coerce.number().default(5 * 1024),
   INFERENCE_LANG: z.string().default("english"),
+  // Structure-preserving LLM HTML translation (imanect-labs fork).
+  TRANSLATION_ENABLE_AUTO: stringBool("false"),
+  TRANSLATION_TARGET_LANG: z.string().default("japanese"),
+  TRANSLATION_NUM_WORKERS: z.coerce.number().default(1),
+  TRANSLATION_JOB_TIMEOUT_SEC: z.coerce.number().default(120),
+  // Approx input tokens per chunk sent to the LLM (output is similar in size).
+  TRANSLATION_CHUNK_TOKENS: z.coerce.number().default(1200),
+  // Skip translation when the content already looks like the target language
+  // (avoids re-translating e.g. Japanese pages). Uses a CJK/kana ratio heuristic.
+  TRANSLATION_SKIP_IF_TARGET: stringBool("true"),
   WEBHOOK_TIMEOUT_SEC: z.coerce.number().default(5),
   WEBHOOK_RETRY_TIMES: z.coerce.number().int().min(0).default(3),
   MAX_RSS_FEEDS_PER_USER: z.coerce.number().default(1000),
@@ -333,6 +343,14 @@ const serverConfigSchema = allEnv.transform((val, ctx) => {
           : val.INFERENCE_OUTPUT_SCHEMA,
       enableAutoTagging: val.INFERENCE_ENABLE_AUTO_TAGGING,
       enableAutoSummarization: val.INFERENCE_ENABLE_AUTO_SUMMARIZATION,
+    },
+    translation: {
+      enableAuto: val.TRANSLATION_ENABLE_AUTO,
+      targetLang: val.TRANSLATION_TARGET_LANG,
+      numWorkers: val.TRANSLATION_NUM_WORKERS,
+      jobTimeoutSec: val.TRANSLATION_JOB_TIMEOUT_SEC,
+      chunkTokens: val.TRANSLATION_CHUNK_TOKENS,
+      skipIfTarget: val.TRANSLATION_SKIP_IF_TARGET,
     },
     chat: {
       enabled: val.CHAT_ENABLED,

@@ -17,6 +17,7 @@ import {
   EmbeddingsQueue,
   getTracer,
   OpenAIQueue,
+  TranslationQueue,
   triggerSearchReindex,
   VideoWorkerQueue,
   withSpan,
@@ -302,6 +303,15 @@ async function enqueuePostCrawlJobs(
       },
       enqueueOpts,
     );
+
+    // Structure-preserving HTML translation (imanect-labs fork).
+    if (serverConfig.translation.enableAuto) {
+      await db
+        .update(bookmarkLinks)
+        .set({ translationStatus: "pending" })
+        .where(eq(bookmarkLinks.id, bookmarkId));
+      await TranslationQueue.enqueue({ bookmarkId }, enqueueOpts);
+    }
   }
 
   // Update the search index

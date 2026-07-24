@@ -45,11 +45,19 @@ export function isBookmarkStillSummarizing(bookmark: ZBookmark) {
   return bookmark.summarizationStatus == "pending";
 }
 
+export function isBookmarkStillTranslating(bookmark: ZBookmark) {
+  return (
+    bookmark.content.type == BookmarkTypes.LINK &&
+    bookmark.content.translationStatus === "pending"
+  );
+}
+
 export function isBookmarkStillLoading(bookmark: ZBookmark) {
   return (
     isBookmarkStillTagging(bookmark) ||
     isBookmarkStillCrawling(bookmark) ||
-    isBookmarkStillSummarizing(bookmark)
+    isBookmarkStillSummarizing(bookmark) ||
+    isBookmarkStillTranslating(bookmark)
   );
 }
 

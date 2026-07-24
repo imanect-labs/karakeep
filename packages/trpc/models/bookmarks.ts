@@ -183,6 +183,8 @@ export class Bookmark extends BareBookmark {
         htmlContent: includeContent
           ? await Bookmark.getBookmarkHtmlContent(link, bookmark.userId)
           : null,
+        translatedContent: includeContent ? link.translatedContent : null,
+        translationStatus: link.translationStatus,
         crawledAt: link.crawledAt,
         crawlStatus: link.crawlStatus,
         author: link.author,
@@ -592,6 +594,10 @@ export class Bookmark extends BareBookmark {
                   : row.bookmarkLinks.htmlContent
                 : null,
               contentAssetId: row.bookmarkLinks.contentAssetId,
+              translatedContent: input.includeContent
+                ? row.bookmarkLinks.translatedContent
+                : null,
+              translationStatus: row.bookmarkLinks.translationStatus,
               crawlStatus: row.bookmarkLinks.crawlStatus,
               crawledAt: row.bookmarkLinks.crawledAt,
               author: row.bookmarkLinks.author,

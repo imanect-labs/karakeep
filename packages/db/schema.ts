@@ -293,6 +293,13 @@ export const bookmarkLinks = sqliteTable(
     // When the pre-crawl probe last extracted and stored this link's metadata.
     // Lets crawl retries skip re-fetching it.
     probeMetadataAt: integer("probeMetadataAt", { mode: "timestamp" }),
+    // Structure-preserving LLM translation of the readable HTML content
+    // (imanect-labs fork). translationStatus is null when translation was never
+    // attempted (disabled / non-source-language), otherwise pending/failure/success.
+    translatedContent: text("translatedContent"),
+    translationStatus: text("translationStatus", {
+      enum: ["pending", "failure", "success"],
+    }),
   },
   (bl) => [index("bookmarkLinks_url_idx").on(bl.url)],
 );

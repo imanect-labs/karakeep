@@ -977,6 +977,9 @@
   },
   "preview": {
     "cached_content": "キャッシュされたコンテンツ",
+    "show_original": "原文",
+    "show_translation": "日本語",
+    "translating": "翻訳中…",
     "view_original": "オリジナルを見る",
     "reader_view": "リーダー表示",
     "tabs": {

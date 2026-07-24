@@ -62,6 +62,9 @@ export const zBookmarkedLinkSchema = z.object({
   favicon: z.string().nullish(),
   htmlContent: z.string().nullish(),
   contentAssetId: z.string().nullish(),
+  // Structure-preserving LLM translation of the readable content (imanect-labs fork).
+  translatedContent: z.string().nullish(),
+  translationStatus: z.enum(["success", "failure", "pending"]).nullish(),
   crawledAt: z.date().nullish(),
   crawlStatus: z.enum(["success", "failure", "pending"]).nullish(),
   author: z.string().nullish(),

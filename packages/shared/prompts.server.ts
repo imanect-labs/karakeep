@@ -23,6 +23,14 @@ async function calculateNumTokens(text: string): Promise<number> {
   return enc.encode(text).length;
 }
 
+/**
+ * Token count using the same encoder used for prompt-size budgeting.
+ * Exported for the translation worker's HTML chunking (imanect-labs fork).
+ */
+export async function countTokens(text: string): Promise<number> {
+  return calculateNumTokens(text);
+}
+
 async function truncateContent(
   content: string,
   length: number,

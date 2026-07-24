@@ -37,6 +37,17 @@ type EventLogInternal =
       "inference.tagging.num_potential_relevant_tags"?: number;
     }
   | {
+      ["event.name"]: "translationWorker.run";
+      "bookmark.id": string;
+      "bookmark.url"?: string;
+      "bookmark.domain"?: string;
+      "translation.target_lang"?: string;
+      "translation.model"?: string;
+      "translation.num_chunks"?: number;
+      "translation.total_tokens"?: number;
+      "translation.skipped"?: boolean;
+    }
+  | {
       ["event.name"]: "bookmark.summarize";
       "bookmark.id"?: string;
       "inference.model"?: string;

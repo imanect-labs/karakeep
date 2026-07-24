@@ -134,6 +134,24 @@ export const OpenAIQueue = createDeferredQueue<ZOpenAIRequest>("openai_queue", {
   keepFailedJobs: false,
 });
 
+// Translation Worker (imanect-labs fork)
+// Structure-preserving HTML translation of the readable content. Kept on its own
+// queue so its many chunk-level LLM calls don't starve tagging/summarization.
+export const zTranslationRequestSchema = z.object({
+  bookmarkId: z.string(),
+});
+export type ZTranslationRequest = z.infer<typeof zTranslationRequestSchema>;
+
+export const TranslationQueue = createDeferredQueue<ZTranslationRequest>(
+  "translation_queue",
+  {
+    defaultJobArgs: {
+      numRetries: 3,
+    },
+    keepFailedJobs: false,
+  },
+);
+
 // Embeddings Worker
 //
 // - "embed": entry point. Generates the bookmark embedding, then dispatches the
