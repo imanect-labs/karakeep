@@ -287,6 +287,20 @@
                     "type": "string",
                     "nullable": true
                   },
+                  "translatedContent": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "translationStatus": {
+                    "type": "string",
+                    "nullable": true,
+                    "enum": [
+                      "success",
+                      "failure",
+                      "pending",
+                      null
+                    ]
+                  },
                   "crawledAt": {
                     "type": "string",
                     "nullable": true,
