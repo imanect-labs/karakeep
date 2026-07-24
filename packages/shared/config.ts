@@ -145,6 +145,11 @@ const allEnv = z.object({
   MAX_ASSET_SIZE_MB: z.coerce.number().default(50),
   HTML_CONTENT_SIZE_INLINE_THRESHOLD_BYTES: z.coerce.number().default(5 * 1024),
   INFERENCE_LANG: z.string().default("english"),
+  // Send `thinking: {type: "disabled"}` to the OpenAI-compatible endpoint to turn
+  // off reasoning. Needed for reasoning models (e.g. DeepSeek V4 Flash via OpenCode
+  // Go) that otherwise spend the whole output budget on reasoning and return empty
+  // content ("Got no message content"). (imanect-labs fork)
+  INFERENCE_DISABLE_THINKING: stringBool("false"),
   // Structure-preserving LLM HTML translation (imanect-labs fork).
   TRANSLATION_ENABLE_AUTO: stringBool("false"),
   TRANSLATION_TARGET_LANG: z.string().default("japanese"),
@@ -335,6 +340,7 @@ const serverConfigSchema = allEnv.transform((val, ctx) => {
       contextLength: val.INFERENCE_CONTEXT_LENGTH,
       maxOutputTokens: val.INFERENCE_MAX_OUTPUT_TOKENS,
       useMaxCompletionTokens: val.INFERENCE_USE_MAX_COMPLETION_TOKENS,
+      disableThinking: val.INFERENCE_DISABLE_THINKING,
       outputSchema:
         val.INFERENCE_SUPPORTS_STRUCTURED_OUTPUT !== undefined
           ? val.INFERENCE_SUPPORTS_STRUCTURED_OUTPUT

@@ -166,6 +166,7 @@ export interface OpenAIInferenceConfig {
   maxOutputTokens: number;
   useMaxCompletionTokens: boolean;
   reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  disableThinking?: boolean;
   outputSchema: "structured" | "json" | "plain";
 }
 
@@ -218,6 +219,7 @@ export class OpenAIInferenceClient implements InferenceClient {
       useMaxCompletionTokens: serverConfig.inference.useMaxCompletionTokens,
       outputSchema: serverConfig.inference.outputSchema,
       reasoningEffort: serverConfig.inference.openAIReasoningEffort,
+      disableThinking: serverConfig.inference.disableThinking,
     });
   }
 
@@ -244,6 +246,11 @@ export class OpenAIInferenceClient implements InferenceClient {
           this.config.outputSchema,
         ),
         reasoning_effort: this.config.reasoningEffort,
+        // Disable reasoning for reasoning models that otherwise burn the whole
+        // output budget on thinking and return empty content (imanect-labs fork).
+        ...(this.config.disableThinking
+          ? { thinking: { type: "disabled" } }
+          : {}),
       },
       {
         signal: optsWithDefaults.abortSignal,
@@ -295,6 +302,10 @@ export class OpenAIInferenceClient implements InferenceClient {
             ],
           },
         ],
+        // Disable reasoning for reasoning models (imanect-labs fork).
+        ...(this.config.disableThinking
+          ? { thinking: { type: "disabled" } }
+          : {}),
       },
       {
         signal: optsWithDefaults.abortSignal,
