@@ -46,6 +46,10 @@ type EventLogInternal =
       "translation.num_chunks"?: number;
       "translation.total_tokens"?: number;
       "translation.skipped"?: boolean;
+      // Chunks that needed another call because the output failed validation,
+      // and chunks kept despite still failing it after the last attempt.
+      "translation.retried_chunks"?: number;
+      "translation.degraded_chunks"?: number;
     }
   | {
       ["event.name"]: "bookmark.summarize";
