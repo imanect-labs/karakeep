@@ -144,28 +144,6 @@ function stripCodeFence(s: string): string {
   return m ? m[1] : t;
 }
 
-/** Visible text of an HTML fragment, whitespace collapsed. */
-function toPlainText(html: string): string {
-  return html
-    .replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/**
- * Last `chars` characters of the visible text, or null when disabled/empty.
- * Only the tail of the markup is scanned (tags inflate it several-fold) so this
- * stays cheap even when called once per chunk on a growing document.
- */
-function contextTail(html: string, chars: number): string | null {
-  if (chars <= 0 || !html) {
-    return null;
-  }
-  const text = toPlainText(html.slice(-chars * 6));
-  return text ? text.slice(-chars) : null;
-}
-
 /** Heuristic: is the text already predominantly CJK/Japanese? */
 function looksLikeJapanese(html: string): boolean {
   const text = html.replace(/<[^>]+>/g, " ").slice(0, 4000);
@@ -177,14 +155,13 @@ function looksLikeJapanese(html: string): boolean {
 async function fetchLinkForTranslation(bookmarkId: string) {
   const bookmark = await db.query.bookmarks.findFirst({
     where: eq(bookmarks.id, bookmarkId),
-    columns: { id: true, userId: true, type: true, title: true },
+    columns: { id: true, userId: true, type: true },
     with: {
       link: {
         columns: {
           htmlContent: true,
           contentAssetId: true,
           url: true,
-          title: true,
           translatedContent: true,
           translationTotalChunks: true,
           translationDoneChunks: true,
@@ -292,24 +269,9 @@ export async function runTranslation(
     })
     .where(eq(bookmarkLinks.id, bookmarkId));
 
-  // Chunks are translated independently, which on its own makes terminology and
-  // style drift between them and strands sentences split across a boundary. Hand
-  // the model the tail of what came just before (source + its translation) as
-  // reference-only context so it can continue rather than restart.
-  const contextChars = serverConfig.translation.contextChars;
-  const title = bookmarkData.title ?? link.title ?? null;
-
   let totalTokens = 0;
   for (const chunk of chunks.slice(doneChunks)) {
-    const prompt = constructTranslationPrompt(targetLang, chunk, {
-      title,
-      previousSource: contextTail(
-        html.slice(Math.max(0, sourceOffset - contextChars * 6), sourceOffset),
-        contextChars,
-      ),
-      previousTranslation: contextTail(translated.join(""), contextChars),
-      style: serverConfig.translation.style,
-    });
+    const prompt = constructTranslationPrompt(targetLang, chunk);
     const result = await inferenceClient.inferFromText(prompt, {
       schema: null,
       abortSignal: job.abortSignal,
@@ -319,21 +281,7 @@ export async function runTranslation(
         `[translation][${jobId}] Empty translation response for "${bookmarkId}".`,
       );
     }
-    const translatedChunk = stripCodeFence(result.response);
-
-    // Dropped or summarized content is the one failure mode that silently
-    // changes meaning, and it always shows up as a much shorter chunk. Japanese
-    // is denser than English so some shrinkage is expected; only shout when the
-    // visible text almost vanished.
-    const srcLen = toPlainText(chunk).length;
-    const outLen = toPlainText(translatedChunk).length;
-    if (srcLen > 200 && outLen < srcLen * 0.2) {
-      logger.warn(
-        `[translation][${jobId}] Chunk ${doneChunks + 1}/${chunks.length} of "${bookmarkId}" shrank from ${srcLen} to ${outLen} visible chars; content may have been dropped.`,
-      );
-    }
-
-    translated.push(translatedChunk);
+    translated.push(stripCodeFence(result.response));
     totalTokens += result.totalTokens ?? 0;
     doneChunks += 1;
     sourceOffset += chunk.length;
