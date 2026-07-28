@@ -95,19 +95,79 @@ You must respond in JSON with the key "tags" and the value is an array of string
  * The chunk may be a partial HTML fragment; tags must be preserved verbatim so
  * that concatenating the translated chunks reproduces the original structure.
  */
+export interface TranslationContext {
+  /** Title of the document the fragment belongs to. */
+  title?: string | null;
+  /** Plain-text tail of the source that precedes this fragment. */
+  previousSource?: string | null;
+  /** Plain-text tail of the translation produced for that preceding source. */
+  previousTranslation?: string | null;
+  /** e.g. "です・ます調". Empty disables the style instruction. */
+  style?: string | null;
+}
+
 export function constructTranslationPrompt(
   targetLang: string,
   htmlChunk: string,
+  context: TranslationContext = {},
 ): string {
-  return `You are a professional translator. Translate the visible text of the following HTML fragment into ${targetLang}.
-You MUST follow these rules strictly:
+  // "japanese" -> "Japanese"; the env value is lowercase but reads as a typo in
+  // the prompt.
+  const lang = targetLang.charAt(0).toUpperCase() + targetLang.slice(1);
+  const styleRule = context.style
+    ? `\n- Use a consistent ${context.style} style across the whole document.`
+    : "";
+
+  const contextLines = [
+    context.title ? `Document title: ${context.title}` : null,
+    context.previousSource
+      ? `Source text immediately before this fragment:\n"""\n…${context.previousSource}\n"""`
+      : null,
+    context.previousTranslation
+      ? `Your translation of that preceding text:\n"""\n…${context.previousTranslation}\n"""`
+      : null,
+  ].filter(Boolean);
+
+  const contextBlock = contextLines.length
+    ? `\n# Context (reference ONLY)
+This is background so that your terminology, style, and sentence flow continue naturally
+from what came before. It is NOT part of the fragment to translate: do NOT translate it,
+do NOT repeat it, and do NOT include any of it in your output.
+
+${contextLines.join("\n\n")}
+`
+    : "";
+
+  return `You are a professional translator producing publication-quality ${lang}.
+Translate the visible text of the HTML fragment below into ${lang}.
+
+# Fidelity (highest priority)
+- Preserve the meaning exactly. Never add, drop, summarize, explain, or embellish anything.
+- Keep every fact, number, unit, date, name, and code identifier exactly as in the original.
+- Keep negations, conditions, and modality (must / should / may / might) exactly as strong or
+  as tentative as the original. Do not turn a hedge into an assertion or vice versa.
+- If the original is ambiguous or vague, keep it ambiguous. Do not resolve it for the reader.
+- Preserve the author's tone (humour, irony, informality) instead of neutralising it.
+
+# Naturalness
+- Translate meaning, not words. Reorder clauses, split or merge sentences, and change parts of
+  speech as needed so the result reads as if it had been written in ${lang} originally.
+- Drop English pronouns (you / we / it / they) and articles where ${lang} does not need
+  them. Do not render them mechanically.
+- Avoid translationese: chained "の", redundant "〜することができる" (prefer "〜できる"),
+  mechanical "そして / しかし", and English word order left intact.
+- Keep technical terms, product names, API names, and identifiers in their original form.
+  Translate a term only when a well-established ${lang} equivalent exists, and use the
+  same rendering for the same term throughout.${styleRule}
+
+# HTML rules
 - Preserve the HTML structure EXACTLY: do not add, remove, reorder, open, or close any tags or attributes.
 - The fragment may be a partial piece of a larger document and may contain unbalanced or unclosed tags. Leave them exactly as they are.
 - Translate ONLY human-readable text nodes. Do NOT translate tag names, attribute names or values, URLs, or the contents of <code>, <pre>, <kbd>, <script>, or <style> elements.
 - Do NOT wrap the output in markdown code fences and do NOT add any explanation.
 - Respond with ONLY the translated HTML fragment.
-
-HTML fragment:
+${contextBlock}
+# HTML fragment to translate
 ${htmlChunk}`;
 }
 
