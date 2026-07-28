@@ -16,7 +16,12 @@ import { DequeuedJob } from "@karakeep/shared/queueing";
 import { BookmarkTypes } from "@karakeep/shared/types/bookmarks";
 import { Bookmark } from "@karakeep/trpc/models/bookmarks";
 
-import { findChunkProblems, stripCodeFence, stripPreamble } from "./validate";
+import {
+  findChunkProblems,
+  restoreCodeContent,
+  stripCodeFence,
+  stripPreamble,
+} from "./validate";
 
 // Void (self-closing) HTML elements that never increase nesting depth.
 const VOID_TAGS = new Set([
@@ -288,7 +293,10 @@ export async function runTranslation(
           `[translation][${jobId}] Empty translation response for "${bookmarkId}".`,
         );
       }
-      const text = stripPreamble(chunk, stripCodeFence(result.response));
+      const text = restoreCodeContent(
+        chunk,
+        stripPreamble(chunk, stripCodeFence(result.response)),
+      );
       const problems = findChunkProblems(chunk, text, targetIsJapanese);
       if (!best || problems.length < best.problems.length) {
         best = { text, problems };

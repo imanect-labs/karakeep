@@ -1,6 +1,11 @@
 import { describe, expect, test } from "vitest";
 
-import { findChunkProblems, stripCodeFence, stripPreamble } from "./validate";
+import {
+  findChunkProblems,
+  restoreCodeContent,
+  stripCodeFence,
+  stripPreamble,
+} from "./validate";
 
 const PROSE = `<p>${"We keep our bound variables stored as an ambient map of variable names to their evaluated values for now. ".repeat(3)}</p>`;
 const JA = `<p>${"束縛変数は変数名からその評価値への環境マップとして保持します。".repeat(6)}</p>`;
@@ -32,6 +37,40 @@ describe("stripPreamble", () => {
 
   test("is a no-op when the output already starts with a tag", () => {
     expect(stripPreamble("<p>hello</p>", "<p>やあ</p>")).toBe("<p>やあ</p>");
+  });
+});
+
+describe("restoreCodeContent", () => {
+  test("puts the source's code back, keeping the translated prose", () => {
+    const src = `<p>Set the field.</p><code>EPrim (PString "found")</code>`;
+    const out = `<p>フィールドを設定します。</p><code>EPrim (PString "見つかった")</code>`;
+    expect(restoreCodeContent(src, out)).toBe(
+      `<p>フィールドを設定します。</p><code>EPrim (PString "found")</code>`,
+    );
+    expect(findChunkProblems(src, restoreCodeContent(src, out), true)).toEqual(
+      [],
+    );
+  });
+
+  test("restores each block positionally", () => {
+    const src = `<code>a</code><p>x</p><pre>b</pre>`;
+    const out = `<code>あ</code><p>え</p><pre>い</pre>`;
+    expect(restoreCodeContent(src, out)).toBe(
+      `<code>a</code><p>え</p><pre>b</pre>`,
+    );
+  });
+
+  test("leaves the output alone when the block counts disagree", () => {
+    const src = `<code>a</code><code>b</code>`;
+    const out = `<code>あ</code>`;
+    expect(restoreCodeContent(src, out)).toBe(out);
+    expect(findChunkProblems(src, out, true)).toContain(
+      "code content was modified",
+    );
+  });
+
+  test("is a no-op without code blocks", () => {
+    expect(restoreCodeContent("<p>a</p>", "<p>あ</p>")).toBe("<p>あ</p>");
   });
 });
 

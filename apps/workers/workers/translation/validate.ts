@@ -13,12 +13,13 @@ export function stripCodeFence(s: string): string {
   return m ? m[1] : t;
 }
 
-const CODEISH_TAGS = /<(script|style|code|pre|kbd)[^>]*>[\s\S]*?<\/\1>/gi;
+/** Fresh instance every call: a shared /g regex carries lastIndex between uses. */
+const codeishTags = () => /<(script|style|code|pre|kbd)[^>]*>[\s\S]*?<\/\1>/gi;
 
 /** Visible prose of an HTML fragment, excluding code-ish elements. */
 export function proseText(html: string): string {
   return html
-    .replace(CODEISH_TAGS, " ")
+    .replace(codeishTags(), " ")
     .replace(/<[^>]+>/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -54,10 +55,30 @@ export function stripPreamble(source: string, out: string): string {
 }
 
 /**
+ * Put the source's <code>/<pre>/… blocks back into the output.
+ *
+ * The model translates string literals inside code ("found" -> "見つかりました",
+ * True -> 真) and, measured on real chunks, it does so on *every* resample of the
+ * same chunk — it is systematic, not random, so retrying only burns tokens. The
+ * blocks have to survive byte-for-byte anyway, so splicing the originals back in
+ * positionally is both free and exactly right. Skipped when the counts disagree,
+ * since then the positions can't be trusted and it stays a reported problem.
+ */
+export function restoreCodeContent(source: string, out: string): string {
+  const srcBlocks = source.match(codeishTags()) ?? [];
+  const outBlocks = out.match(codeishTags()) ?? [];
+  if (srcBlocks.length === 0 || srcBlocks.length !== outBlocks.length) {
+    return out;
+  }
+  let i = 0;
+  return out.replace(codeishTags(), () => srcBlocks[i++]);
+}
+
+/**
  * Problems worth spending another call on. Measured against the real endpoint
- * (DeepSeek V4 Flash): every prompt variant we tried echoes the input verbatim
- * or mangles the markup on some chunks, so the output has to be checked rather
- * than trusted.
+ * (DeepSeek V4 Flash): it echoes the input verbatim or mangles the markup on
+ * some chunks, and resampling clears those, so the output is checked rather
+ * than trusted. Code damage is repaired instead (see restoreCodeContent).
  */
 export function findChunkProblems(
   source: string,
@@ -87,10 +108,10 @@ export function findChunkProblems(
     problems.push(`tag count changed (${srcTags.length} -> ${outTags.length})`);
   }
 
-  // Code must never be translated. The model does translate string literals
-  // inside <code> ("value" -> "値") often enough to be worth catching.
-  const srcCode = source.match(CODEISH_TAGS)?.join("") ?? "";
-  const outCode = out.match(CODEISH_TAGS)?.join("") ?? "";
+  // Only reachable when restoreCodeContent could not repair it, i.e. the model
+  // added or dropped a code block so the positions no longer line up.
+  const srcCode = source.match(codeishTags())?.join("") ?? "";
+  const outCode = out.match(codeishTags())?.join("") ?? "";
   if (srcCode && srcCode !== outCode) {
     problems.push("code content was modified");
   }
