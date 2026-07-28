@@ -16,6 +16,13 @@ import { DequeuedJob } from "@karakeep/shared/queueing";
 import { BookmarkTypes } from "@karakeep/shared/types/bookmarks";
 import { Bookmark } from "@karakeep/trpc/models/bookmarks";
 
+import {
+  findChunkProblems,
+  restoreCodeContent,
+  stripCodeFence,
+  stripPreamble,
+} from "./validate";
+
 // Void (self-closing) HTML elements that never increase nesting depth.
 const VOID_TAGS = new Set([
   "area",
@@ -137,35 +144,6 @@ function chunkHtml(html: string, maxChars: number): string[] {
   return chunks;
 }
 
-/** Strip a ```html ... ``` code fence the model may add despite instructions. */
-function stripCodeFence(s: string): string {
-  const t = s.trim();
-  const m = /^```(?:html)?\s*([\s\S]*?)\s*```$/i.exec(t);
-  return m ? m[1] : t;
-}
-
-/** Visible text of an HTML fragment, whitespace collapsed. */
-function toPlainText(html: string): string {
-  return html
-    .replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/**
- * Last `chars` characters of the visible text, or null when disabled/empty.
- * Only the tail of the markup is scanned (tags inflate it several-fold) so this
- * stays cheap even when called once per chunk on a growing document.
- */
-function contextTail(html: string, chars: number): string | null {
-  if (chars <= 0 || !html) {
-    return null;
-  }
-  const text = toPlainText(html.slice(-chars * 6));
-  return text ? text.slice(-chars) : null;
-}
-
 /** Heuristic: is the text already predominantly CJK/Japanese? */
 function looksLikeJapanese(html: string): boolean {
   const text = html.replace(/<[^>]+>/g, " ").slice(0, 4000);
@@ -177,14 +155,13 @@ function looksLikeJapanese(html: string): boolean {
 async function fetchLinkForTranslation(bookmarkId: string) {
   const bookmark = await db.query.bookmarks.findFirst({
     where: eq(bookmarks.id, bookmarkId),
-    columns: { id: true, userId: true, type: true, title: true },
+    columns: { id: true, userId: true, type: true },
     with: {
       link: {
         columns: {
           htmlContent: true,
           contentAssetId: true,
           url: true,
-          title: true,
           translatedContent: true,
           translationTotalChunks: true,
           translationDoneChunks: true,
@@ -292,49 +269,56 @@ export async function runTranslation(
     })
     .where(eq(bookmarkLinks.id, bookmarkId));
 
-  // Chunks are translated independently, which on its own makes terminology and
-  // style drift between them and strands sentences split across a boundary. Hand
-  // the model the tail of what came just before (source + its translation) as
-  // reference-only context so it can continue rather than restart.
-  const contextChars = serverConfig.translation.contextChars;
-  const title = bookmarkData.title ?? link.title ?? null;
+  const targetIsJapanese = targetLang.trim().toLowerCase() === "japanese";
+  const maxAttempts = serverConfig.translation.maxChunkAttempts;
 
   let totalTokens = 0;
+  let retriedChunks = 0;
+  let degradedChunks = 0;
   for (const chunk of chunks.slice(doneChunks)) {
-    const prompt = constructTranslationPrompt(targetLang, chunk, {
-      title,
-      previousSource: contextTail(
-        html.slice(Math.max(0, sourceOffset - contextChars * 6), sourceOffset),
-        contextChars,
-      ),
-      previousTranslation: contextTail(translated.join(""), contextChars),
-      style: serverConfig.translation.style,
-    });
-    const result = await inferenceClient.inferFromText(prompt, {
-      schema: null,
-      abortSignal: job.abortSignal,
-    });
-    if (!result.response) {
-      throw new Error(
-        `[translation][${jobId}] Empty translation response for "${bookmarkId}".`,
-      );
-    }
-    const translatedChunk = stripCodeFence(result.response);
+    const prompt = constructTranslationPrompt(targetLang, chunk);
 
-    // Dropped or summarized content is the one failure mode that silently
-    // changes meaning, and it always shows up as a much shorter chunk. Japanese
-    // is denser than English so some shrinkage is expected; only shout when the
-    // visible text almost vanished.
-    const srcLen = toPlainText(chunk).length;
-    const outLen = toPlainText(translatedChunk).length;
-    if (srcLen > 200 && outLen < srcLen * 0.2) {
+    // The endpoint is unreliable per call, not per prompt: on some chunks it
+    // echoes the input, prepends "以下が…翻訳したものです。", or rewrites code.
+    // Sampling again clears it, so keep the cleanest attempt.
+    let best: { text: string; problems: string[] } | null = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const result = await inferenceClient.inferFromText(prompt, {
+        schema: null,
+        abortSignal: job.abortSignal,
+      });
+      totalTokens += result.totalTokens ?? 0;
+      if (!result.response) {
+        throw new Error(
+          `[translation][${jobId}] Empty translation response for "${bookmarkId}".`,
+        );
+      }
+      const text = restoreCodeContent(
+        chunk,
+        stripPreamble(chunk, stripCodeFence(result.response)),
+      );
+      const problems = findChunkProblems(chunk, text, targetIsJapanese);
+      if (!best || problems.length < best.problems.length) {
+        best = { text, problems };
+      }
+      if (problems.length === 0) {
+        break;
+      }
+      if (attempt < maxAttempts) {
+        retriedChunks += 1;
+        logger.info(
+          `[translation][${jobId}] Chunk ${doneChunks + 1}/${chunks.length} of "${bookmarkId}" ${problems.join("; ")}; retrying (attempt ${attempt + 1}/${maxAttempts}).`,
+        );
+      }
+    }
+    if (best!.problems.length > 0) {
+      degradedChunks += 1;
       logger.warn(
-        `[translation][${jobId}] Chunk ${doneChunks + 1}/${chunks.length} of "${bookmarkId}" shrank from ${srcLen} to ${outLen} visible chars; content may have been dropped.`,
+        `[translation][${jobId}] Chunk ${doneChunks + 1}/${chunks.length} of "${bookmarkId}" kept with problems after ${maxAttempts} attempts: ${best!.problems.join("; ")}.`,
       );
     }
 
-    translated.push(translatedChunk);
-    totalTokens += result.totalTokens ?? 0;
+    translated.push(best!.text);
     doneChunks += 1;
     sourceOffset += chunk.length;
 
@@ -354,6 +338,8 @@ export async function runTranslation(
   addLogFields<"translationWorker.run">({
     "translation.num_chunks": chunks.length,
     "translation.total_tokens": totalTokens,
+    "translation.retried_chunks": retriedChunks,
+    "translation.degraded_chunks": degradedChunks,
   });
 
   await db
@@ -362,6 +348,6 @@ export async function runTranslation(
     .where(eq(bookmarks.id, bookmarkId));
 
   logger.info(
-    `[translation][${jobId}] Translated "${bookmarkId}" (${chunks.length} chunks, ${totalTokens} tokens).`,
+    `[translation][${jobId}] Translated "${bookmarkId}" (${chunks.length} chunks, ${totalTokens} tokens, ${retriedChunks} retries, ${degradedChunks} kept with problems).`,
   );
 }

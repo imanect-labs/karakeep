@@ -157,13 +157,10 @@ const allEnv = z.object({
   TRANSLATION_JOB_TIMEOUT_SEC: z.coerce.number().default(120),
   // Approx input tokens per chunk sent to the LLM (output is similar in size).
   TRANSLATION_CHUNK_TOKENS: z.coerce.number().default(1200),
-  // Characters of preceding source text + preceding translation handed to the
-  // model as reference so terminology, style and sentence flow stay consistent
-  // across chunk boundaries. 0 disables it.
-  TRANSLATION_CONTEXT_CHARS: z.coerce.number().min(0).default(800),
-  // Style the whole document should be written in, e.g. "です・ます調" or
-  // "だ・である調". Empty disables the instruction.
-  TRANSLATION_STYLE: z.string().default("です・ます調"),
+  // How many times a single chunk may be sent before giving up and keeping the
+  // cleanest attempt. The endpoint intermittently echoes the input untranslated,
+  // prepends a preamble, or rewrites code; resampling clears it. 1 disables.
+  TRANSLATION_MAX_CHUNK_ATTEMPTS: z.coerce.number().int().min(1).default(3),
   // Skip translation when the content already looks like the target language
   // (avoids re-translating e.g. Japanese pages). Uses a CJK/kana ratio heuristic.
   TRANSLATION_SKIP_IF_TARGET: stringBool("true"),
@@ -363,8 +360,7 @@ const serverConfigSchema = allEnv.transform((val, ctx) => {
       numWorkers: val.TRANSLATION_NUM_WORKERS,
       jobTimeoutSec: val.TRANSLATION_JOB_TIMEOUT_SEC,
       chunkTokens: val.TRANSLATION_CHUNK_TOKENS,
-      contextChars: val.TRANSLATION_CONTEXT_CHARS,
-      style: val.TRANSLATION_STYLE,
+      maxChunkAttempts: val.TRANSLATION_MAX_CHUNK_ATTEMPTS,
       skipIfTarget: val.TRANSLATION_SKIP_IF_TARGET,
     },
     chat: {
