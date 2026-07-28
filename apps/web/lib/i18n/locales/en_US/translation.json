@@ -237,7 +237,8 @@
         "bookmark_click_action": {
           "title": "Bookmark Click Action",
           "open_external_url": "Open Original URL",
-          "open_bookmark_details": "Open Bookmark Details"
+          "open_bookmark_details": "Open Bookmark Details",
+          "open_reader_view": "Open Reader View"
         },
         "archive_display_behaviour": {
           "title": "Archived Bookmarks",

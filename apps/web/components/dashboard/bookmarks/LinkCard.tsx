@@ -17,16 +17,25 @@ import FooterLinkURL from "./FooterLinkURL";
 
 const useOnClickUrl = (bookmark: ZBookmarkTypeLink) => {
   const userSettings = useUserSettings();
-  return {
-    urlTarget:
-      userSettings.bookmarkClickAction === "open_original_link"
-        ? ("_blank" as const)
-        : ("_self" as const),
-    onClickUrl:
-      userSettings.bookmarkClickAction === "expand_bookmark_preview"
-        ? `/dashboard/preview/${bookmark.id}`
-        : bookmark.content.url,
-  };
+  switch (userSettings.bookmarkClickAction) {
+    case "expand_bookmark_preview":
+      return {
+        urlTarget: "_self" as const,
+        onClickUrl: `/dashboard/preview/${bookmark.id}`,
+      };
+    case "open_reader_view":
+      // Full screen reader view (the standalone /reader page, not the preview
+      // modal) so that clicking a card lands directly on the parsed article.
+      return {
+        urlTarget: "_self" as const,
+        onClickUrl: `/reader/${bookmark.id}`,
+      };
+    case "open_original_link":
+      return {
+        urlTarget: "_blank" as const,
+        onClickUrl: bookmark.content.url,
+      };
+  }
 };
 
 function LinkTitle({ bookmark }: { bookmark: ZBookmarkTypeLink }) {

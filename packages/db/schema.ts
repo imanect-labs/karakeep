@@ -67,7 +67,7 @@ export const users = sqliteTable("user", {
 
   // User Settings
   bookmarkClickAction: text("bookmarkClickAction", {
-    enum: ["open_original_link", "expand_bookmark_preview"],
+    enum: ["open_original_link", "expand_bookmark_preview", "open_reader_view"],
   })
     .notNull()
     .default("open_original_link"),

@@ -250,7 +250,8 @@
         "bookmark_click_action": {
           "title": "ブックマーククリック時の動作",
           "open_external_url": "元のURLを開く",
-          "open_bookmark_details": "ブックマークの詳細を開く"
+          "open_bookmark_details": "ブックマークの詳細を開く",
+          "open_reader_view": "リーダービューを開く"
         },
         "archive_display_behaviour": {
           "show": "タグとリストにアーカイブされたブックマークを表示する",
