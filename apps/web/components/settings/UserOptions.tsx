@@ -84,6 +84,9 @@ export default function UserOptions() {
     expand_bookmark_preview: t(
       "settings.info.user_settings.bookmark_click_action.open_bookmark_details",
     ),
+    open_reader_view: t(
+      "settings.info.user_settings.bookmark_click_action.open_reader_view",
+    ),
   };
 
   const archiveDisplayBehaviourTranslation: Record<

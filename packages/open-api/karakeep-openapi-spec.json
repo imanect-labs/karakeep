@@ -301,6 +301,18 @@
                       null
                     ]
                   },
+                  "translationTotalChunks": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "translationDoneChunks": {
+                    "type": "integer",
+                    "nullable": true
+                  },
+                  "translationSourceOffset": {
+                    "type": "integer",
+                    "nullable": true
+                  },
                   "crawledAt": {
                     "type": "string",
                     "nullable": true,

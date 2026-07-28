@@ -162,6 +162,9 @@ async function fetchLinkForTranslation(bookmarkId: string) {
           htmlContent: true,
           contentAssetId: true,
           url: true,
+          translatedContent: true,
+          translationTotalChunks: true,
+          translationDoneChunks: true,
         },
       },
     },
@@ -233,13 +236,41 @@ export async function runTranslation(
   const maxChars = Math.max(500, serverConfig.translation.chunkTokens * 3);
   const chunks = chunkHtml(html, maxChars);
 
+  // A retried job re-chunks the same HTML with the same config, so the chunk
+  // list is identical and the already-translated prefix can be kept instead of
+  // being paid for again (and instead of the reader's progress going backwards).
+  const resumable =
+    link.translationTotalChunks === chunks.length &&
+    (link.translationDoneChunks ?? 0) > 0 &&
+    (link.translationDoneChunks ?? 0) < chunks.length &&
+    !!link.translatedContent;
+  const translated: string[] = resumable ? [link.translatedContent!] : [];
+  let doneChunks = resumable ? link.translationDoneChunks! : 0;
+  // Characters of the source HTML the done chunks cover, so the reader can
+  // append the not-yet-translated remainder to the partial translation.
+  let sourceOffset = chunks
+    .slice(0, doneChunks)
+    .reduce((acc, c) => acc + c.length, 0);
+
   logger.info(
-    `[translation][${jobId}] Translating "${bookmarkId}" into ${targetLang} in ${chunks.length} chunk(s).`,
+    `[translation][${jobId}] Translating "${bookmarkId}" into ${targetLang} in ${chunks.length} chunk(s)` +
+      (resumable ? `, resuming from chunk ${doneChunks + 1}.` : "."),
   );
 
-  const translated: string[] = [];
+  // Publish the chunk count up front so the reader can show a progress bar from
+  // the first poll, and reset any stale partial output when not resuming.
+  await db
+    .update(bookmarkLinks)
+    .set({
+      translatedContent: resumable ? link.translatedContent : null,
+      translationTotalChunks: chunks.length,
+      translationDoneChunks: doneChunks,
+      translationSourceOffset: sourceOffset,
+    })
+    .where(eq(bookmarkLinks.id, bookmarkId));
+
   let totalTokens = 0;
-  for (const chunk of chunks) {
+  for (const chunk of chunks.slice(doneChunks)) {
     const prompt = constructTranslationPrompt(targetLang, chunk);
     const result = await inferenceClient.inferFromText(prompt, {
       schema: null,
@@ -252,19 +283,26 @@ export async function runTranslation(
     }
     translated.push(stripCodeFence(result.response));
     totalTokens += result.totalTokens ?? 0;
-  }
+    doneChunks += 1;
+    sourceOffset += chunk.length;
 
-  const translatedContent = translated.join("");
+    // Persist after every chunk so the reader renders the translation as it
+    // streams in rather than only once the whole document is done. Chunks are
+    // cut at top-level tag boundaries, so a prefix is still well-formed HTML.
+    await db
+      .update(bookmarkLinks)
+      .set({
+        translatedContent: translated.join(""),
+        translationDoneChunks: doneChunks,
+        translationSourceOffset: sourceOffset,
+      })
+      .where(eq(bookmarkLinks.id, bookmarkId));
+  }
 
   addLogFields<"translationWorker.run">({
     "translation.num_chunks": chunks.length,
     "translation.total_tokens": totalTokens,
   });
-
-  await db
-    .update(bookmarkLinks)
-    .set({ translatedContent })
-    .where(eq(bookmarkLinks.id, bookmarkId));
 
   await db
     .update(bookmarks)

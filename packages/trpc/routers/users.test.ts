@@ -241,6 +241,14 @@ describe("User Routes", () => {
       tagStyle: "lowercase-underscores",
     });
 
+    // The reader view click action is accepted as well
+    await caller.users.updateSettings({
+      bookmarkClickAction: "open_reader_view",
+    });
+    expect((await caller.users.settings()).bookmarkClickAction).toEqual(
+      "open_reader_view",
+    );
+
     // Test invalid update (e.g., empty input, if schema enforces it)
     await expect(() => caller.users.updateSettings({})).rejects.toThrow(
       /No settings provided/,
