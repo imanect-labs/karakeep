@@ -300,6 +300,15 @@ export const bookmarkLinks = sqliteTable(
     translationStatus: text("translationStatus", {
       enum: ["pending", "failure", "success"],
     }),
+    // Chunk-level progress. The worker persists the partial translation after
+    // every chunk, so the reader can render what's done so far and show how far
+    // along the job is. Both are null until a job starts chunking.
+    translationTotalChunks: integer("translationTotalChunks"),
+    translationDoneChunks: integer("translationDoneChunks"),
+    // How many characters of the source HTML the done chunks cover. Lets the
+    // reader splice the untranslated remainder onto the partial translation so
+    // the article never looks truncated mid-run.
+    translationSourceOffset: integer("translationSourceOffset"),
   },
   (bl) => [index("bookmarkLinks_url_idx").on(bl.url)],
 );

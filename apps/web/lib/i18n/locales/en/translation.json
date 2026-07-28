@@ -973,6 +973,7 @@
     "show_original": "Original",
     "show_translation": "日本語",
     "translating": "Translating…",
+    "translating_progress": "Translating… {{done}}/{{total}}",
     "archive_info": "Archives may not render correctly inline if they require Javascript. For best results, <1>download it and open in your browser</1>.",
     "fetch_error_title": "Content Unavailable",
     "fetch_error_description": "We couldn't fetch the content for this link. The page may be protected, require authentication, or be temporarily unavailable.",

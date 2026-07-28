@@ -65,6 +65,10 @@ export const zBookmarkedLinkSchema = z.object({
   // Structure-preserving LLM translation of the readable content (imanect-labs fork).
   translatedContent: z.string().nullish(),
   translationStatus: z.enum(["success", "failure", "pending"]).nullish(),
+  // Chunk-level progress of an in-flight translation.
+  translationTotalChunks: z.number().int().nullish(),
+  translationDoneChunks: z.number().int().nullish(),
+  translationSourceOffset: z.number().int().nullish(),
   crawledAt: z.date().nullish(),
   crawlStatus: z.enum(["success", "failure", "pending"]).nullish(),
   author: z.string().nullish(),

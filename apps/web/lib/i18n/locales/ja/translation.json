@@ -981,6 +981,7 @@
     "show_original": "原文",
     "show_translation": "日本語",
     "translating": "翻訳中…",
+    "translating_progress": "翻訳中… {{done}}/{{total}}",
     "view_original": "オリジナルを見る",
     "reader_view": "リーダー表示",
     "tabs": {

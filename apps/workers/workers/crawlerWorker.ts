@@ -308,7 +308,14 @@ async function enqueuePostCrawlJobs(
     if (serverConfig.translation.enableAuto) {
       await db
         .update(bookmarkLinks)
-        .set({ translationStatus: "pending" })
+        .set({
+          translationStatus: "pending",
+          // Clear the previous run's chunk counters so the reader doesn't show
+          // a stale 100% until the worker picks the job up.
+          translationTotalChunks: null,
+          translationDoneChunks: null,
+          translationSourceOffset: null,
+        })
         .where(eq(bookmarkLinks.id, bookmarkId));
       await TranslationQueue.enqueue({ bookmarkId }, enqueueOpts);
     }

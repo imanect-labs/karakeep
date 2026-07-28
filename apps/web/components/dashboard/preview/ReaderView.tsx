@@ -52,29 +52,63 @@ export default function ReaderView({
                 htmlContent: data.content.htmlContent ?? null,
                 translatedContent: data.content.translatedContent ?? null,
                 translationStatus: data.content.translationStatus ?? null,
+                translationTotalChunks:
+                  data.content.translationTotalChunks ?? null,
+                translationDoneChunks:
+                  data.content.translationDoneChunks ?? null,
+                translationSourceOffset:
+                  data.content.translationSourceOffset ?? null,
               }
             : null,
-        // Keep polling while a translation is still being generated.
+        // Keep polling while a translation is still being generated. The worker
+        // persists after every chunk, so each poll picks up more of the article.
         refetchInterval: (query) => {
           const d = query.state.data;
           return d?.content.type === BookmarkTypes.LINK &&
             d.content.translationStatus === "pending"
-            ? 3000
+            ? 2000
             : false;
         },
       },
     ),
   );
 
-  const [showTranslation, setShowTranslation] = useState(false);
-  const hasTranslation =
-    !!linkContent?.translatedContent &&
-    linkContent.translationStatus === "success";
+  // null = the user hasn't picked a side yet, so follow the default below.
+  const [showTranslationOverride, setShowTranslationOverride] = useState<
+    boolean | null
+  >(null);
   const isTranslating = linkContent?.translationStatus === "pending";
+  // Partial output counts: the reader renders whatever chunks are done so far.
+  const hasTranslation = !!linkContent?.translatedContent;
+  // Default to the translation while it streams in and once it succeeded; a
+  // failed run falls back to the original but its partial output stays reachable
+  // through the toggle.
+  const showTranslation =
+    showTranslationOverride ??
+    (isTranslating || linkContent?.translationStatus === "success");
+  // While the job is running, show the translated prefix followed by the source
+  // HTML the worker hasn't reached yet, so the article stays whole and flips to
+  // the target language section by section as chunks land.
+  const partialWithRemainder = () => {
+    const translated = linkContent?.translatedContent ?? "";
+    const offset = linkContent?.translationSourceOffset;
+    const source = linkContent?.htmlContent ?? "";
+    if (!isTranslating || offset == null || offset >= source.length) {
+      return translated;
+    }
+    return translated + source.slice(offset);
+  };
   const displayContent =
     showTranslation && hasTranslation
-      ? linkContent?.translatedContent
+      ? partialWithRemainder()
       : (linkContent?.htmlContent ?? null);
+
+  const totalChunks = linkContent?.translationTotalChunks ?? null;
+  const doneChunks = linkContent?.translationDoneChunks ?? null;
+  const translationPercent =
+    totalChunks && totalChunks > 0 && doneChunks !== null
+      ? Math.min(100, Math.round((doneChunks / totalChunks) * 100))
+      : null;
 
   const {
     showBanner,
@@ -132,19 +166,36 @@ export default function ReaderView({
     },
   });
 
+  const translationProgress = isTranslating ? (
+    <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+      <Languages className="h-3.5 w-3.5 animate-pulse" />
+      {translationPercent !== null
+        ? t("preview.translating_progress", {
+            defaultValue: "Translating… {{done}}/{{total}}",
+            done: doneChunks,
+            total: totalChunks,
+          })
+        : t("preview.translating", "Translating…")}
+      {translationPercent !== null && (
+        <span className="h-1 w-16 overflow-hidden rounded-full bg-muted">
+          <span
+            className="block h-full rounded-full bg-primary transition-all duration-500"
+            style={{ width: `${translationPercent}%` }}
+          />
+        </span>
+      )}
+    </span>
+  ) : null;
+
   const translationToggle =
     hasTranslation || isTranslating ? (
-      <div className="flex items-center justify-end gap-1 px-1 pb-2">
-        {isTranslating && !hasTranslation ? (
-          <span className="flex items-center gap-1 text-xs text-muted-foreground">
-            <Languages className="h-3.5 w-3.5 animate-pulse" />
-            {t("preview.translating", "Translating…")}
-          </span>
-        ) : (
+      <div className="flex items-center justify-end gap-2 px-1 pb-2">
+        {translationProgress}
+        {hasTranslation && (
           <div className="flex overflow-hidden rounded-md border text-xs">
             <button
               type="button"
-              onClick={() => setShowTranslation(false)}
+              onClick={() => setShowTranslationOverride(false)}
               className={cn(
                 "px-2 py-1",
                 !showTranslation
@@ -156,7 +207,7 @@ export default function ReaderView({
             </button>
             <button
               type="button"
-              onClick={() => setShowTranslation(true)}
+              onClick={() => setShowTranslationOverride(true)}
               className={cn(
                 "px-2 py-1",
                 showTranslation

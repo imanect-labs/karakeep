@@ -185,6 +185,9 @@ export class Bookmark extends BareBookmark {
           : null,
         translatedContent: includeContent ? link.translatedContent : null,
         translationStatus: link.translationStatus,
+        translationTotalChunks: link.translationTotalChunks,
+        translationDoneChunks: link.translationDoneChunks,
+        translationSourceOffset: link.translationSourceOffset,
         crawledAt: link.crawledAt,
         crawlStatus: link.crawlStatus,
         author: link.author,
@@ -598,6 +601,10 @@ export class Bookmark extends BareBookmark {
                 ? row.bookmarkLinks.translatedContent
                 : null,
               translationStatus: row.bookmarkLinks.translationStatus,
+              translationTotalChunks: row.bookmarkLinks.translationTotalChunks,
+              translationDoneChunks: row.bookmarkLinks.translationDoneChunks,
+              translationSourceOffset:
+                row.bookmarkLinks.translationSourceOffset,
               crawlStatus: row.bookmarkLinks.crawlStatus,
               crawledAt: row.bookmarkLinks.crawledAt,
               author: row.bookmarkLinks.author,
