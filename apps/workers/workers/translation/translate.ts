@@ -165,6 +165,7 @@ async function fetchLinkForTranslation(bookmarkId: string) {
           translatedContent: true,
           translationTotalChunks: true,
           translationDoneChunks: true,
+          translationSourceOffset: true,
         },
       },
     },
@@ -236,6 +237,22 @@ export async function runTranslation(
   const maxChars = Math.max(500, serverConfig.translation.chunkTokens * 3);
   const chunks = chunkHtml(html, maxChars);
 
+  // A finished translation of this exact HTML. The crawler retries a URL and
+  // enqueues a translation job per crawl, so the same content routinely arrives
+  // twice; without this the second job re-pays for an identical result.
+  const alreadyTranslated =
+    !!link.translatedContent &&
+    link.translationTotalChunks === chunks.length &&
+    link.translationDoneChunks === chunks.length &&
+    link.translationSourceOffset === html.length;
+  if (alreadyTranslated) {
+    logger.info(
+      `[translation][${jobId}] "${bookmarkId}" is already translated from identical content (${chunks.length} chunks). Skipping.`,
+    );
+    addLogFields<"translationWorker.run">({ "translation.skipped": true });
+    return;
+  }
+
   // A retried job re-chunks the same HTML with the same config, so the chunk
   // list is identical and the already-translated prefix can be kept instead of
   // being paid for again (and instead of the reader's progress going backwards).
@@ -244,6 +261,13 @@ export async function runTranslation(
     (link.translationDoneChunks ?? 0) > 0 &&
     (link.translationDoneChunks ?? 0) < chunks.length &&
     !!link.translatedContent;
+
+  // Whether the reader currently has something worth looking at. If it does, the
+  // new run is built up in memory and swapped in at the end: overwriting as we
+  // go would replace a readable article with English for the whole run, which is
+  // exactly what a reader mid-article sees. Only a bookmark with nothing (or
+  // only a half-finished prefix) streams chunk by chunk.
+  const hasReadableTranslation = !!link.translatedContent && !resumable;
   const translated: string[] = resumable ? [link.translatedContent!] : [];
   let doneChunks = resumable ? link.translationDoneChunks! : 0;
   // Characters of the source HTML the done chunks cover, so the reader can
@@ -254,18 +278,27 @@ export async function runTranslation(
 
   logger.info(
     `[translation][${jobId}] Translating "${bookmarkId}" into ${targetLang} in ${chunks.length} chunk(s)` +
-      (resumable ? `, resuming from chunk ${doneChunks + 1}.` : "."),
+      (resumable ? `, resuming from chunk ${doneChunks + 1}` : "") +
+      (hasReadableTranslation
+        ? ", keeping the existing translation visible until this run finishes"
+        : "") +
+      ".",
   );
 
   // Publish the chunk count up front so the reader can show a progress bar from
-  // the first poll, and reset any stale partial output when not resuming.
+  // the first poll. translatedContent is only touched when there is nothing
+  // readable to protect.
   await db
     .update(bookmarkLinks)
     .set({
-      translatedContent: resumable ? link.translatedContent : null,
+      ...(hasReadableTranslation
+        ? {}
+        : {
+            translatedContent: resumable ? link.translatedContent : null,
+            translationSourceOffset: sourceOffset,
+          }),
       translationTotalChunks: chunks.length,
       translationDoneChunks: doneChunks,
-      translationSourceOffset: sourceOffset,
     })
     .where(eq(bookmarkLinks.id, bookmarkId));
 
@@ -325,11 +358,27 @@ export async function runTranslation(
     // Persist after every chunk so the reader renders the translation as it
     // streams in rather than only once the whole document is done. Chunks are
     // cut at top-level tag boundaries, so a prefix is still well-formed HTML.
+    // When an existing translation is being replaced, only the counters move:
+    // the article stays readable and the new text is swapped in below.
+    await db
+      .update(bookmarkLinks)
+      .set({
+        ...(hasReadableTranslation
+          ? {}
+          : {
+              translatedContent: translated.join(""),
+              translationSourceOffset: sourceOffset,
+            }),
+        translationDoneChunks: doneChunks,
+      })
+      .where(eq(bookmarkLinks.id, bookmarkId));
+  }
+
+  if (hasReadableTranslation) {
     await db
       .update(bookmarkLinks)
       .set({
         translatedContent: translated.join(""),
-        translationDoneChunks: doneChunks,
         translationSourceOffset: sourceOffset,
       })
       .where(eq(bookmarkLinks.id, bookmarkId));
