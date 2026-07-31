@@ -308,14 +308,11 @@ async function enqueuePostCrawlJobs(
     if (serverConfig.translation.enableAuto) {
       await db
         .update(bookmarkLinks)
-        .set({
-          translationStatus: "pending",
-          // Clear the previous run's chunk counters so the reader doesn't show
-          // a stale 100% until the worker picks the job up.
-          translationTotalChunks: null,
-          translationDoneChunks: null,
-          translationSourceOffset: null,
-        })
+        // The previous run's chunk counters are deliberately left in place: the
+        // translation worker uses them to recognise that this exact content is
+        // already translated and skip the job. A crawl retry re-enqueues here,
+        // so without that check the same article is paid for twice.
+        .set({ translationStatus: "pending" })
         .where(eq(bookmarkLinks.id, bookmarkId));
       await TranslationQueue.enqueue({ bookmarkId }, enqueueOpts);
     }

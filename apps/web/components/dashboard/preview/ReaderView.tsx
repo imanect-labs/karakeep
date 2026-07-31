@@ -80,20 +80,21 @@ export default function ReaderView({
   const isTranslating = linkContent?.translationStatus === "pending";
   // Partial output counts: the reader renders whatever chunks are done so far.
   const hasTranslation = !!linkContent?.translatedContent;
-  // Default to the translation while it streams in and once it succeeded; a
-  // failed run falls back to the original but its partial output stays reachable
-  // through the toggle.
-  const showTranslation =
-    showTranslationOverride ??
-    (isTranslating || linkContent?.translationStatus === "success");
-  // While the job is running, show the translated prefix followed by the source
-  // HTML the worker hasn't reached yet, so the article stays whole and flips to
-  // the target language section by section as chunks land.
+  // Default to the translation whenever there is one. Falling back to the
+  // original when a run fails would yank a half-read Japanese article back to
+  // English, which is worse than showing what did get translated.
+  const showTranslation = showTranslationOverride ?? hasTranslation;
+  // While the translation is incomplete, show the translated prefix followed by
+  // the source HTML the worker hasn't reached yet, so the article stays whole
+  // and flips to the target language section by section as chunks land. A run
+  // that failed part-way keeps the same treatment rather than truncating.
+  const isIncomplete =
+    isTranslating || linkContent?.translationStatus === "failure";
   const partialWithRemainder = () => {
     const translated = linkContent?.translatedContent ?? "";
     const offset = linkContent?.translationSourceOffset;
     const source = linkContent?.htmlContent ?? "";
-    if (!isTranslating || offset == null || offset >= source.length) {
+    if (!isIncomplete || offset == null || offset >= source.length) {
       return translated;
     }
     return translated + source.slice(offset);
