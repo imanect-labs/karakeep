@@ -36,11 +36,19 @@ export function getCuratedTagsPrompt(curatedTags?: string[]): string {
   return "";
 }
 
+/**
+ * Tags the library already uses (imanect-labs fork).
+ *
+ * Upstream only offered these as a soft hint from similar bookmarks. Left that
+ * way, each item invents its own wording and the library ends up holding "LLM",
+ * "llm" and "大規模言語モデル" side by side, so the instruction is a requirement
+ * and names the failure modes explicitly.
+ */
 export function getPotentialRelevantTagsPrompt(
   potentialRelevantTags?: string[],
 ): string {
   if (potentialRelevantTags && potentialRelevantTags.length > 0) {
-    return `- Similar bookmarks were tagged with the following tags (reuse if possible, ignore if irrelevant): ${potentialRelevantTags.join(", ")}`;
+    return `- The following tags already exist. If one of them fits the content, you MUST reuse it verbatim -- same spelling, same casing, same language. Never emit a variant of an existing tag: no case changes, no different separators, no singular/plural switch, and no translation of it into another language (if "LLM" is listed, do not emit "llm", "L.L.M." or its translated equivalent). Only invent a new tag when nothing listed fits: ${potentialRelevantTags.join(", ")}`;
   }
   return "";
 }

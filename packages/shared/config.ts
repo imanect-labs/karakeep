@@ -145,6 +145,9 @@ const allEnv = z.object({
   MAX_ASSET_SIZE_MB: z.coerce.number().default(50),
   HTML_CONTENT_SIZE_INLINE_THRESHOLD_BYTES: z.coerce.number().default(5 * 1024),
   INFERENCE_LANG: z.string().default("english"),
+  // How many of the user's existing tags to offer the model so it reuses them
+  // instead of inventing a variant or a translation. Most-used first; 0 disables.
+  INFERENCE_EXISTING_TAGS_LIMIT: z.coerce.number().int().min(0).default(200),
   // Send `thinking: {type: "disabled"}` to the OpenAI-compatible endpoint to turn
   // off reasoning. Needed for reasoning models (e.g. DeepSeek V4 Flash via OpenCode
   // Go) that otherwise spend the whole output budget on reasoning and return empty
@@ -341,6 +344,7 @@ const serverConfigSchema = allEnv.transform((val, ctx) => {
       textModel: val.INFERENCE_TEXT_MODEL,
       imageModel: val.INFERENCE_IMAGE_MODEL,
       inferredTagLang: val.INFERENCE_LANG,
+      existingTagsLimit: val.INFERENCE_EXISTING_TAGS_LIMIT,
       contextLength: val.INFERENCE_CONTEXT_LENGTH,
       maxOutputTokens: val.INFERENCE_MAX_OUTPUT_TOKENS,
       useMaxCompletionTokens: val.INFERENCE_USE_MAX_COMPLETION_TOKENS,
