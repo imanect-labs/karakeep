@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { getBookmarkDomain } from "network";
 import { buildImpersonatingTRPCClient } from "trpc";
 import { z } from "zod";
@@ -528,6 +528,34 @@ async function fetchBookmark(linkId: string) {
 const RELEVANT_TAG_SCORE_THRESHOLD = 0.75;
 
 /**
+ * The tags this user already has, most used first (imanect-labs fork).
+ *
+ * getPotentiallyRelevantTags below needs the bookmark to be in the vector store,
+ * which it never is when tagging runs right after a crawl -- every call logged
+ * "Document not found", so the model never saw an existing tag and each item
+ * invented its own wording. Reading them straight from the database is exact and
+ * always available; the cap keeps a large library from swamping the prompt.
+ */
+async function getExistingTags(userId: string): Promise<string[]> {
+  const limit = serverConfig.inference.existingTagsLimit;
+  if (limit <= 0) {
+    return [];
+  }
+  const rows = await db
+    .select({
+      name: bookmarkTags.name,
+      uses: sql<number>`count(${tagsOnBookmarks.bookmarkId})`.as("uses"),
+    })
+    .from(bookmarkTags)
+    .leftJoin(tagsOnBookmarks, eq(tagsOnBookmarks.tagId, bookmarkTags.id))
+    .where(eq(bookmarkTags.userId, userId))
+    .groupBy(bookmarkTags.id)
+    .orderBy(desc(sql`uses`))
+    .limit(limit);
+  return rows.map((r) => r.name);
+}
+
+/**
  * Finds potentially relevant tags for the passed bookmarkId by finding similar
  * bookmarks and fetching their tags.
  *
@@ -666,20 +694,30 @@ export async function runTagging(
     });
     curatedTagNames = tags.map((t) => t.name);
   } else {
-    // If no curated tags are configured, try to find some potentially relevant tags
+    // The tags the library already uses come first: they are what keeps wording
+    // consistent across items. Similar-bookmark tags are a bonus on top, and
+    // routinely unavailable (the bookmark is not in the vector store yet), so a
+    // failure there must not cost us the existing ones.
+    const existingTags = await getExistingTags(bookmark.userId);
+    let similarTags: string[] = [];
     try {
-      potentialRelevantTags =
+      similarTags =
         (await getPotentiallyRelevantTags(
           jobId,
           bookmarkId,
           bookmark.userId,
           job.data.embedding,
-        )) ?? undefined;
+        )) ?? [];
     } catch (e) {
-      logger.error(
-        `[inference][${jobId}] Failed to find potentially relevant tags: ${e}`,
+      logger.debug(
+        `[inference][${jobId}] Could not look up tags of similar bookmarks: ${e}`,
       );
     }
+    const merged = [...new Set([...existingTags, ...similarTags])];
+    potentialRelevantTags = merged.length > 0 ? merged : undefined;
+    logger.debug(
+      `[inference][${jobId}] Offering ${merged.length} existing tag(s) to the model for "${bookmarkId}".`,
+    );
   }
 
   logger.info(
