@@ -17,7 +17,9 @@ import { BookmarkTypes } from "@karakeep/shared/types/bookmarks";
 import { Bookmark } from "@karakeep/trpc/models/bookmarks";
 
 import {
+  cjkRatio,
   findChunkProblems,
+  proseText,
   restoreCodeContent,
   stripCodeFence,
   stripPreamble,
@@ -144,12 +146,17 @@ function chunkHtml(html: string, maxChars: number): string[] {
   return chunks;
 }
 
-/** Heuristic: is the text already predominantly CJK/Japanese? */
+/**
+ * Heuristic: is the text already predominantly CJK/Japanese?
+ *
+ * Measured over the whole document's prose with code excluded. Sampling only the
+ * first 4000 characters and counting code along with it made this miss real
+ * Japanese articles: a zenn post about Rust scored 28.9% against the 0.3
+ * threshold because its opening is full of Rust snippets and identifiers, so it
+ * was translated Japanese-to-Japanese. The same article is 76.7% by prose.
+ */
 function looksLikeJapanese(html: string): boolean {
-  const text = html.replace(/<[^>]+>/g, " ").slice(0, 4000);
-  const jp = text.match(/[぀-ヿ一-鿿]/g)?.length ?? 0;
-  const nonSpace = text.match(/\S/g)?.length ?? 0;
-  return nonSpace > 0 && jp / nonSpace > 0.3;
+  return cjkRatio(proseText(html)) > 0.3;
 }
 
 async function fetchLinkForTranslation(bookmarkId: string) {

@@ -1,7 +1,9 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  cjkRatio,
   findChunkProblems,
+  proseText,
   restoreCodeContent,
   stripCodeFence,
   stripPreamble,
@@ -37,6 +39,38 @@ describe("stripPreamble", () => {
 
   test("is a no-op when the output already starts with a tag", () => {
     expect(stripPreamble("<p>hello</p>", "<p>やあ</p>")).toBe("<p>やあ</p>");
+  });
+});
+
+// The skip-if-already-in-target check is cjkRatio(proseText(html)) > 0.3.
+describe("cjkRatio over proseText", () => {
+  const detects = (html: string) => cjkRatio(proseText(html)) > 0.3;
+
+  test("recognises a Japanese article whose code drags the raw ratio down", () => {
+    // Shape of the zenn post that was needlessly translated: a few Japanese
+    // paragraphs plus long Rust snippets full of identifiers.
+    const html =
+      `<p>${"バックエンドの主要な開発言語には Rust を使用しています。".repeat(4)}</p>` +
+      `<pre><code>${"fn check_expr(cx: &LateContext, expr: &Expr) -> Option<Span> { }\n".repeat(20)}</code></pre>`;
+    expect(cjkRatio(html.replace(/<[^>]+>/g, " "))).toBeLessThan(0.3);
+    expect(detects(html)).toBe(true);
+  });
+
+  test("does not claim an English article is Japanese", () => {
+    expect(detects(PROSE)).toBe(false);
+  });
+
+  test("does not fire on an English article that quotes a little Japanese", () => {
+    const html = PROSE + `<p>The word is 日本語 in Japanese.</p>`;
+    expect(detects(html)).toBe(false);
+  });
+
+  test("looks at the whole document, not just the opening", () => {
+    // Japanese article that opens with an English abstract.
+    const html =
+      `<p>${"This post is a reprint of the original article. ".repeat(6)}</p>` +
+      `<p>${"モデルが一回に出す量は増え続けており、読む側の処理能力は変わりません。".repeat(10)}</p>`;
+    expect(detects(html)).toBe(true);
   });
 });
 
