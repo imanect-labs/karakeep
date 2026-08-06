@@ -17,16 +17,24 @@
 
 1. 実際の行動ログから学習し、読まれる記事の割合を上げる
 2. 本人が言語化していない興味を、探索枠を通じて発見・可視化する
-3. LLM に渡すコンテキストを、履歴の全量ではなく圧縮したプロフィールと上位候補に限定する
+3. **候補プールを供給するソースそのものを広げる**（購読済みサイトの中だけで探索しても母集団は広がらない）
+4. LLM に渡すコンテキストを、履歴の全量ではなく圧縮したプロフィールと上位候補に限定する
 
 ### 成功の定義
 
 | 指標 | 現状（推定） | 3 か月後の目標 |
 |---|---|---|
-| 提示記事のクリック率 | — | 25% 以上 |
-| 提示記事の保存率（karakeep へのブックマーク化） | — | 8% 以上 |
+| クリック率 | — | 25% 以上 |
+| 保存率（karakeep へのブックマーク化） | — | 8% 以上 |
+| **新規ドメイン由来の保存率** | — | **20% 以上** |
+| **保存記事の上位 5 ドメイン集中度** | — | **単調増加していないこと** |
+| 新規に購読へ昇格したドメイン | — | 月 2 件以上 |
 | 探索枠から生まれた新規選好クラスタ | — | 月 1 件以上 |
 | Briefing 生成の所要時間 | — | 30 秒以内（LLM 生成を除き 5 秒以内） |
+
+**クリック率・保存率の分母は「提示数」ではなく「`observed` な Briefing の `examined` な impression 数」とする**（§6.3 参照）。提示数を分母にすると、忙しくて Briefing を見なかった週に指標が下がったように見え、モデルの良し悪しと区別できなくなる。
+
+「新規ドメイン由来」とは、**6 か月前の時点で購読も保存もしていなかったドメイン**を指す。推薦精度が上がってもソースが広がっていなければ目的 3 を達成していないため、これを主要 KPI に置く。ドメイン集中度は探索が死んでいないかの逆指標であり、単調増加は警報とする。
 
 初期はベースラインが存在しないため、Phase 1 の最初の 4 週間を「新着順ランダム提示」と併走させ、その値をベースラインとする。
 
@@ -35,8 +43,9 @@
 ### 対象
 
 - 単一ユーザー（自宅サーバー 1 人運用）
+- **新規ソース（ドメイン）の発見・審査・試用・昇格**
 - 記事候補の収集・重複排除・埋め込み
-- 推薦スコアリングと探索制御
+- 推薦スコアリングと探索制御（記事レベルとソースレベルの 2 階層）
 - karakeep 内の Briefing ページ（1 ページ追加）
 - フィードバック収集とログ蓄積
 - プロフィール更新とモデル再学習
@@ -68,6 +77,31 @@
 
 ## 4. 機能要件
 
+### 4.0 ソース発見（FR-D）
+
+購読済みソースの集合は、自分で選んだ時点で明示的な興味の写像になっている。その中での探索では候補の母集団が広がらないため、ドメインそのものを探索対象にする。
+
+| ID | 要件 |
+|---|---|
+| FR-D-01 | 発見されたドメインを `recDomains` に一意に登録し、ライフサイクル（`discovered` → `screened` → `trial` → `subscribed` / `dormant` / `rejected` / `retired`）で管理する |
+| FR-D-02 | 発見の証拠を `recDomainDiscoveries` に残す。チャネル種別・発見元（元記事の ID や検索クエリ）・発見日時・重みを記録し、同一ドメインの複数チャネルからの発見を累積できる |
+| FR-D-03 | **D1: 既存ブックマークのドメイン逆引き** — 手で保存したことがあるが購読していないドメインを抽出する。初回の一括処理と、以後のブックマーク作成時の増分処理の両方に対応する |
+| FR-D-04 | **D2: 外部リンク抽出** — 正例となったブックマークの `bookmarkLinks.htmlContent` から外部リンクのドメインを抽出する。被リンク回数は元記事の報酬で重み付けする。追加のクロールは行わない |
+| FR-D-05 | **D3: フィード自動発見** — 発見済みドメインのトップページから `<link rel="alternate" type="application/rss+xml">` を解決する。見つからない場合は `/feed`, `/rss.xml`, `/atom.xml`, `/index.xml` を順に試す。すべて失敗したドメインはスクレイプ対象として `screened` に上げてよい |
+| FR-D-06 | **D4: アグリゲータのドメインサンプリング** — Hacker News / Lobsters の上位エントリを、記事の供給源ではなく**ドメインの標本**として扱う。抽出したドメインのうち未知のものを `discovered` に入れる |
+| FR-D-07 | **D5: 著者・publisher 追跡**（Phase 3）— 正例記事の `author` / `publisher` から、その書き手の個人サイト・他媒体を発見する |
+| FR-D-08 | **D6: blogroll 抽出**（Phase 3）— 昇格済みドメインのリンク集ページを LLM で抽出し、そこに載っているドメインを発見する。ドメインあたり 1 回のみ実行する |
+| FR-D-09 | **D7: small-web 検索**（Phase 3）— 潜在クラスタのラベルをクエリにして、独立サイト特化の検索（Marginalia / searchmysite 等）を週次で実行する |
+| FR-D-10 | **D10: ドメイン埋め込みの近傍**（Phase 3）— ドメインごとの記事埋め込み重心を持ち、選好ドメインに近い未購読ドメインを探す |
+| FR-D-11 | **D8: SNS の共有リンク**（Phase 4）、**D9: LLM 検索エージェント**（Phase 5）を追加チャネルとして実装する |
+| FR-D-12 | 品質ゲート — `discovered` から `screened` に上げる際、(a) ブロックリスト、(b) 直近 90 日に 3 記事以上の更新、(c) 一次情報らしさのヒューリスティック（本文文字数・外部リンク比率・広告スクリプト数）、(d) LLM によるドメイン分類（一次情報 / 分析 / 転載 / 宣伝）を通す。LLM 判定は**ドメインあたり 1 回のみ**とし結果を永続化する |
+| FR-D-13 | 試用 — `trial` のドメインは最大 6 記事 / 4 週間だけ提示される。試用枠のドメイン選択は、ドメインごとのベータ事後分布 `Beta(1 + 正例数, 4 + examined 数 − 正例数)` からの Thompson Sampling で行う |
+| FR-D-14 | 昇格 — `examined` 6 件以上、かつ事後平均が購読済みドメインの中央値を上回った場合に `subscribed` へ昇格する。昇格時に `recSources` を自動生成する |
+| FR-D-15 | 降格 — 購読済みドメインが直近 20 `examined` で正例ゼロ、または 90 日更新なしの場合 `dormant` にする。`dormant` は収集対象から外すが記録は残す |
+| FR-D-16 | 上限と礼儀 — 同時に `trial` にできるドメインは 10 件まで、`subscribed` の上限は 300 件。クロール時は `robots.txt` を尊重し、ドメインあたり 1 リクエスト / 5 秒を上限とし、User-Agent に連絡先を含める |
+| FR-D-17 | 手動昇格・却下 — UI からドメインを 1 クリックで `subscribed` / `rejected` にできる。手動判断はモデルの試用判定より優先する |
+| FR-D-18 | `rejected` / `retired` の記録は削除しない。同じドメインが再発見されたときに再審査しないため |
+
 ### 4.1 候補収集（FR-C）
 
 | ID | 要件 |
@@ -95,7 +129,8 @@
 | ID | 要件 |
 |---|---|
 | FR-R-01 | 有効な候補全件に対してスコアと不確実性を算出する |
-| FR-R-02 | 枠の配分は既定で exploit 60% / adjacent 20% / uncertain 10% / random 10%。設定で変更可能だが、`uncertain + random` は 10% を下回れない |
+| FR-R-02 | 枠の配分は既定で exploit 55% / adjacent 20% / uncertain 10% / **trial 10%** / random 5%。設定で変更可能だが、`uncertain + trial + random` は 25% を、**`trial` は単独で 10%** を下回れない |
+| FR-R-02b | `trial` 枠は `trial` 状態のドメイン由来の候補のみから選ぶ。試用ドメインの記事は 1 Briefing あたり最大 2 件とし、探索疲れを避ける |
 | FR-R-03 | ランキング確定後に多様性制約を適用する。同一クラスタからの採用は 1 Briefing あたり最大 3 件、同一ドメインは最大 2 件 |
 | FR-R-04 | 各提示について、スコア・不確実性・枠種別・propensity・モデルバージョン・特徴量スナップショットを `recImpressions` に保存する |
 | FR-R-05 | 提示されなかった候補についても、上位 100 件までは `shown=false` で `recImpressions` に記録する |
@@ -112,10 +147,13 @@
 | FR-U-02 | 選定理由は「過去に高評価だった記事群と意味的に近い」「最近このテーマの提示が多いため重複ペナルティあり」のような自然文で表示する。探索枠の記事には探索枠であることを明示する |
 | FR-U-03 | 各カードに **開く** / **保存** / **いいね** / **興味なし** の 4 操作を置く |
 | FR-U-04 | 「保存」は既存のブックマーク作成フローを呼び、通常どおり crawl・要約・タグ付け・翻訳の対象にする。保存したブックマーク ID を impression に紐づける |
-| FR-U-05 | 「興味なし」は理由の選択（テーマ違い / 既読 / 情報源が弱い / 内容が薄い）を任意で受け付ける |
+| FR-U-05 | 「興味なし」は **1 クリックで完了**する。理由の選択（テーマ違い / 既読 / 情報源が弱い / 内容が薄い）は任意の追加操作とし、必須にしない。明示的な負例はこれしか取れないため、押すコストを最小化する |
 | FR-U-06 | 「興味の現在地」パネルで、明示プロフィール・上位選好クラスタ（ラベルと代表記事）・否定クラスタ・現在の探索率を表示する |
 | FR-U-07 | 過去の Briefing を日付で遡れる |
-| FR-U-08 | 未操作カードはスクロールで画面内に入った時点で `viewed` イベントを記録する（IntersectionObserver） |
+| FR-U-08 | カードが viewport に 50% 以上・1 秒以上入った時点で `viewed` イベントを記録する（IntersectionObserver） |
+| FR-U-09 | 試用ドメイン由来のカードには、試用中であることと発見経路を明示する |
+| FR-U-10 | 「今日の新しい発見」ブロックを置き、新規発見ドメインを**発見経路の説明つき**で表示する（例:「あなたが保存した記事 3 本からリンクされていました」）。各ドメインに **購読 / 却下** の 1 クリック操作を置く |
+| FR-U-11 | Briefing を開いた時点で `opened` イベントを送り、離脱時に最後に `viewed` されたカードの順位を送る。これらは §6.3 の観測状態の判定に使う |
 
 ### 4.5 フィードバック収集（FR-F）
 
@@ -125,6 +163,9 @@
 | FR-F-02 | 遅延報酬を日次で join する。保存されたブックマークの `userReadingProgress.readingProgressPercent`、`highlights` の有無、`bookmarks.favourited`、リスト追加を、対応する impression に紐づける |
 | FR-F-03 | 遅延報酬の観測窓は保存から 7 日。7 日経過後に確定させ、以後は更新しない |
 | FR-F-04 | 既存ブックマーク（推薦経由でないもの）も、コールドスタート用の正例として学習に使えるよう `recImpressions` に `source='bootstrap'` として取り込める |
+| FR-F-05 | Briefing の観測状態を判定して `recBriefings.observationState` に保存する。`unobserved`（`opened` イベントなし）/ `partial`（開いたが最下部に到達せず）/ `observed`（最下部まで到達） |
+| FR-F-06 | impression ごとに `examined` フラグを立てる。`viewed` イベントがあるか、**その impression より下位の impression に `viewed` がある**（通過証明）場合に `true` とする |
+| FR-F-07 | `unobserved` な Briefing の impression には**一切ラベルを付けない**。ログとしては保持するが、学習・指標のどちらの分母にも入れない |
 
 ### 4.6 プロフィールと学習（FR-L）
 
@@ -133,7 +174,9 @@
 | FR-L-01 | 4 種のプロフィールを保持し日次更新する — 明示 / 長期潜在 / 直近 7 日 / 否定 |
 | FR-L-02 | 長期潜在プロフィールは全正例埋め込みの重心。直近プロフィールは半減期 7 日の指数減衰重み付き重心 |
 | FR-L-03 | クラスタ選好は、クラスタごとの正例率をベータ分布で平滑化した値とする（事前分布 α=1, β=4） |
+| FR-L-03b | ドメインごとのベータ事後分布を更新し、`trial` の昇格・降格判定を行う（FR-D-13〜15） |
 | FR-L-04 | モデルは `heuristic-v1` → `logreg-v1` → `bayes-logreg-v1` の順に昇格する。昇格条件を満たさない間は下位モデルを使う |
+| FR-L-04b | 学習目標は**同一 Briefing 内のペアワイズ比較**とする（§6.2）。`examined` かつ未操作の記事を単独の負例ラベルにはしない |
 | FR-L-05 | モデル再学習は日次。新モデルは 7 日間シャドー評価（実提示には使わず予測のみ記録）し、既存モデルの AUC を上回った場合のみ昇格する |
 | FR-L-06 | すべてのモデルバージョンとパラメータ・学習日時・評価指標を `recModels` に保存し、任意のバージョンにロールバックできる |
 | FR-L-07 | 学習データが昇格条件を満たさない場合、学習ジョブは何もせず理由をログに残す（無理に学習しない） |
@@ -155,13 +198,31 @@ MCP Tool として公開する。morning briefing エージェントはこれを
 すべて `rec` プレフィックス。`packages/db/schema.ts` の末尾に追記し、追加マイグレーションで作成する。
 
 ```
+recDomains
+  id, userId, domain(unique per user), status('discovered'|'screened'|
+    'trial'|'subscribed'|'dormant'|'rejected'|'retired'),
+  feedUrl, scrapable(bool), title, description, faviconUrl,
+  qualityClass('primary'|'analysis'|'syndication'|'promotional'|'unknown'),
+  qualityCheckedAt, blockedReason,
+  centroid(blob),                     -- ドメイン埋め込み (D10 用)
+  examinedCount, positiveCount, betaAlpha(real), betaBeta(real),
+  trialStartedAt, trialImpressionCount,
+  promotedAt, demotedAt, manualDecision('subscribe'|'reject'|null),
+  firstSeenAt, lastArticleAt, createdAt
+
+recDomainDiscoveries
+  id, domainId, channel('bookmark_backfill'|'outbound_link'|'aggregator'|
+    'author'|'blogroll'|'smallweb_search'|'domain_neighbor'|'social'|'llm_search'),
+  evidenceRef,                        -- 元記事 bookmarkId / 検索クエリ 等
+  weight(real), discoveredAt
+
 recSources
-  id, userId, kind('rss'|'hn'|'arxiv'|'github'|'custom'), config(json),
-  profileIndependent(bool), enabled(bool), consecutiveFailures(int),
-  lastFetchedAt, createdAt
+  id, userId, domainId, kind('rss'|'hn'|'arxiv'|'github'|'scrape'|'custom'),
+  config(json), profileIndependent(bool), enabled(bool),
+  consecutiveFailures(int), lastFetchedAt, createdAt
 
 recCandidates
-  id, userId, sourceId, url, canonicalUrl, urlHash(unique per user),
+  id, userId, sourceId, domainId, url, canonicalUrl, urlHash(unique per user),
   title, summary, contentExcerpt, author, publishedAt, fetchedAt,
   lang, embedding(blob, Float32), embeddingStatus, clusterId,
   duplicateOfId, status('active'|'expired'|'promoted'), bookmarkId,
@@ -179,10 +240,13 @@ recProfiles
 
 recBriefings
   id, userId, briefingDate, slot('morning'), status, modelVersion,
-  itemCount, generatedAt
+  itemCount, generatedAt,
+  observationState('unobserved'|'partial'|'observed'),
+  openedAt, deepestViewedRank, observationFinalizedAt
 
 recImpressions
-  id, userId, briefingId, candidateId, rank, arm, shown(bool),
+  id, userId, briefingId, candidateId, domainId, rank, arm, shown(bool),
+  examined(bool),                     -- 実際に目に入ったと確認できるか
   score(real), uncertainty(real), propensity(real),
   modelVersion, features(json), shownAt,
   rewardFinalized(bool), rewardValue(real), createdAt
@@ -222,28 +286,73 @@ karakeep のベクトルストアプラグイン（`packages/shared/vectorStore.
 | `read_full`（読了率 60% 以上） | +0.8 | 遅延報酬 |
 | `highlighted` | +0.9 | 遅延報酬 |
 | `favourited`（保存後） | +1.0 | 遅延報酬 |
-| `no_click`（提示されたが未操作） | -0.15 | 弱い負例。重みは意図的に小さい |
 
-### 6.2 学習ラベル
+**`no_click` というイベントは定義しない。** 「押されなかったこと」は観測ではないため（§6.3）。
 
-二値分類の正例／負例と、サンプル重みに変換する。
+### 6.2 学習ラベル — ペアワイズ比較
+
+`examined` かつ未操作の記事を、単独の負例ラベルにはしない。代わりに**同一 Briefing 内のペアワイズ比較**を学習の主目標とする。
 
 ```
-strong_positive : saved | liked | favourited | highlighted | read_full
-                    → label=1, weight=1.0
-weak_positive   : clicked のみ（保存も読了もなし）
-                    → label=1, weight=0.3
-weak_negative   : 提示されたが未クリック
-                    → label=0, weight=0.3
-strong_negative : dismissed
-                    → label=0, weight=1.5
+同一 Briefing b の中で:
+  正例集合  P_b = { saved | liked | favourited | highlighted | read_full }
+  比較対象  N_b = { examined かつ未操作 }   ← ラベルではなく「比較の相手」
+
+  学習目標:  すべての (x⁺, x⁻) ∈ P_b × N_b について σ(w·(x⁺ − x⁻)) を最大化
 ```
 
-「クリックしなかった」を強い負例にしない。表示位置・時間帯・見出しの弱さなど、興味以外の要因が混ざるため。
+同一 Briefing 内で比較するため、その日の可処分時間・気分・時間帯といった**日次のバイアスがペアの中でキャンセルされる**。「今日は忙しくて 3 件しか開けなかった」という日でも、開いた 3 件と開かなかった記事の相対順序の情報は正しく残る。
 
-### 6.3 ポジションバイアスの扱い
+実装上は差分ベクトル `x⁺ − x⁻` に対するロジスティック回帰そのもの（Bradley–Terry / RankNet の 1 層版）であり、二値分類とまったく同じコードで動く。
+
+**サンプル重み**
+
+| ペアの種類 | 重み |
+|---|---|
+| strong_positive（保存・いいね・読了）vs examined 未操作 | 1.0 |
+| weak_positive（クリックのみ）vs examined 未操作 | 0.3 |
+| **dismissed を負側に置いたペア** | 1.5 |
+
+`dismissed` は唯一の明示的な負例であり、`P_b` が空の Briefing でも「他のどの examined 記事より下」というペアを作れる。
+
+**ペアが作れない Briefing の扱い**
+
+正例も `dismissed` もない Briefing（開いたが何もしなかった日）は、ペアが 1 つも作れないため**学習に寄与しない**。これは正しい挙動である。「何もしなかった」から何かを推論しようとしない。
+
+### 6.3 「押されなかったこと」を観測として扱わない
+
+クリックは安定して観測できるが、**非クリックは観測できない**。Briefing を見ない日、途中までしかスクロールしない日、開いたが時間がなかった日がある。これらの impression を負例にすると、記録されるのは興味の欠如ではなく可処分時間になる。
+
+**3 段の防御**
+
+| 段 | 仕組み | 効果 |
+|---|---|---|
+| 1 | `observationState = unobserved` の Briefing は学習・指標のどちらの分母にも入れない | 見なかった日が丸ごと除外される |
+| 2 | `examined = false` の impression は比較対象にしない | スクロールで到達しなかったカードが除外される |
+| 3 | ペアワイズ比較（§6.2）で日次バイアスをキャンセルする | 忙しい日と暇な日を同列に扱わない |
+
+**`examined` の判定**
+
+次のいずれかを満たす場合に `true`。
+
+- そのカードが viewport に 50% 以上・1 秒以上入った（`viewed` イベント）
+- **より下位のカードに `viewed` がある**（通過証明。スクロールで飛ばされたが視界には入った）
+
+最後に `viewed` されたカードより下の未到達カードは `examined = false` とする。
+
+**指標の分母**
+
+クリック率・保存率の分母は「提示数」ではなく **`observed` な Briefing の `examined` impression 数**とする。提示数を分母にすると、忙しかった週に指標が下がったように見え、モデルの良し悪しと区別できない。
+
+**未観測 Briefing の記事の再提示**
+
+`unobserved` だった Briefing のスコア上位 5 件は、翌日の Briefing に 1 回だけ再提示してよい。ただし**新しい impression レコードとして記録**し、元の impression は未ラベルのまま残す。再提示は 1 回限りとし、それでも観測されなければ候補プールに戻す。
+
+### 6.4 ポジションバイアスの扱い
 
 表示順位 `rank` を **学習時のみ特徴量に含め**、推論時は `rank=1` に固定する。これにより「上に出たからクリックされた」分の寄与をモデルから切り離す。
+
+ペアワイズ学習では、同一 Briefing 内で `rank` が近い記事どうしのペアほどバイアスの影響が小さい。将来的にはペアの重みを `1 / (1 + |rank⁺ − rank⁻|)` で減衰させることも検討する（Phase 3 以降、データ量を見てから）。
 
 ## 7. 特徴量
 
@@ -259,8 +368,11 @@ strong_negative : dismissed
 | 6 | 所属クラスタの選好スコア | real |
 | 7 | 所属クラスタの直近 7 日提示回数（対数） | real |
 | 8 | 公開からの経過時間（対数時間） | real |
-| 9 | ソース種別（上位 8 ソースの one-hot + other） | 9 次元 |
-| 10 | 一次情報フラグ（ドメインリスト判定） | bool |
+| 9 | ソース種別（rss / aggregator / scrape / api） | 4 次元 |
+| 9b | **ドメインのベータ事後平均**（未知ドメインは事前値 0.2） | real |
+| 9c | **ドメインの examined 数**（対数。事後の信頼度を表す） | real |
+| 9d | **ドメイン状態**（subscribed / trial） | bool |
+| 10 | 一次情報フラグ（`recDomains.qualityClass` 由来） | 4 次元 |
 | 11 | 新規性 = 1 − 既存ブックマークとの最大コサイン | real |
 | 12 | 言語（ja / en / other） | 3 次元 |
 | 13 | 曜日（平日 / 休日） | bool |
@@ -268,6 +380,8 @@ strong_negative : dismissed
 | 15 | 本文長の推定値（対数） | real |
 | 16 | `heuristic-v1` のスコア | real |
 | 17 | 表示順位（学習時のみ） | real |
+
+**ドメインを one-hot にしない**のが要点。ドメインは数百に増えるうえ新規追加が続くため、one-hot にすると次元が発散し、新規ドメインは常に未学習になる。代わりに**ドメイン単位のベータ事後平均を 1 特徴に圧縮**して渡す。ドメインの良し悪しはソースレベルのバンディット（§4.0）が持ち、記事モデルはそれを 1 つの入力として受け取るという役割分担にする。
 
 特徴量スキーマは `recModels.featureSchema` に保存し、スキーマが変わったら旧モデルを自動で `retired` にする。
 
@@ -339,6 +453,14 @@ strong_negative : dismissed
   ],
   "recent_interest_shift": "直近 2 週間で「形式手法」への反応が増加",
   "exploration_rate": 0.15,
+  "source_discovery": {
+    "trial_domains": [
+      { "domain": "simonwillison.net", "discovered_via": "outbound_link",
+        "evidence": "保存記事 3 本からリンク", "examined": 4, "positives": 2 }
+    ],
+    "recently_promoted": ["lobste.rs", "blog.example-lab.ac.jp"],
+    "new_domain_save_share": 0.22
+  },
   "model_version": "bayes-logreg-v1"
 }
 ```
@@ -371,6 +493,8 @@ strong_negative : dismissed
 ## 10. 制約と前提
 
 - ユーザーは 1 名。学習データは年間 impression 約 7,300 件、正例約 1,000 件を見込む。**この規模がモデル選択の最大の制約**である
+- ただしペアワイズ学習（§6.2）では、1 Briefing あたり `|P| × |N|` 組のペアが作れる。正例 3 件 × examined 未操作 15 件なら 1 日 45 組、年間約 16,000 組になる。**制約が効くのは正例の絶対数（年 1,000 件）であってペア数ではない**点に注意する。ペアが増えても独立な情報は増えない
+- Briefing を見ない日が一定割合ある前提で設計する。観測率 70% を想定し、それを下回っても指標が壊れないよう分母を `observed` に限定する（§6.3）
 - karakeep の SQLite は `local-path` PV で d1（worker-1）にノード固定。推薦機能もこのノードに乗る
 - Meilisearch は既存の検索・ベクトル用途のまま。推薦は Meilisearch に依存しない
 - 埋め込みモデルは既存の推論設定（`InferenceClientFactory`）に従う。モデルを変えた場合は全候補の再埋め込みが必要で、その間はプロフィールとの比較が無効になる。モデル ID を `recCandidates` に記録し、混在時は再計算する
@@ -387,6 +511,12 @@ strong_negative : dismissed
 | 埋め込み API の障害・モデル変更 | 候補が推薦できない | 埋め込み失敗候補は新着順フォールバックの対象に含める。モデル ID を記録 |
 | 候補プールの肥大化 | SQLite の性能劣化 | 14 日で expire、90 日でパージ。候補数の上限アラートを Grafana に設定 |
 | 「保存」以外の読了計測ができない | 報酬が保存に偏る | 外部リンクの滞在時間は計測しない設計とし、保存後の読了を主要な深度シグナルとして扱うことを明示 |
+| **Briefing を見ない日が続く** | 偽の負例が大量に混入し、モデルが劣化する | `unobserved` の除外・`examined` 判定・ペアワイズ学習の 3 段構え（§6.3）。観測率が 4 週連続で 50% を下回ったら学習を停止する |
+| **明示的な負例が集まらない** | 「興味なし」を押す習慣がないとペアの負側が弱くなる | 「興味なし」を 1 クリックにする（FR-U-05）。それでも `dismissed` が週 3 件未満なら、UI 上で軽く促す |
+| **ソース発見でスパムが流入する** | 候補プールの品質低下 | 4 段の品質ゲート（FR-D-12）、`trial` は同時 10 ドメインまで、1 Briefing あたり試用記事 2 件まで |
+| **試用枠が体感品質を下げる** | 毎朝ゴミを見せられて Briefing 自体を見なくなる → 上のリスクに連鎖 | 試用記事は 1 日最大 2 件。試用中であることを明示し、期待値を下げておく。「今日の新しい発見」ブロックで却下を 1 クリックにする |
+| **ドメインプールの肥大化** | クロール負荷と運用コスト | `subscribed` 上限 300、90 日更新なしで `dormant`、直近 20 examined で正例ゼロなら降格 |
+| **クロール先への負荷・礼儀** | ブロックされる、迷惑をかける | `robots.txt` 尊重、ドメインあたり 1 リクエスト / 5 秒、User-Agent に連絡先を明記（FR-D-16） |
 
 ## 12. オフポリシー評価の準備
 
@@ -397,6 +527,8 @@ strong_negative : dismissed
 - 推薦時のモデルバージョン
 - **推薦確率 (propensity)**
 - 探索か活用か（arm）
+- **Briefing の観測状態と impression の `examined` フラグ** — これがないと、過去ログのどれが有効なサンプルだったか後から復元できない
+- **ドメインの当時の状態とベータ事後**（trial / subscribed、α・β）
 - 特徴量スナップショット
 - その時点のプロフィールのハッシュ（`recProfiles` の履歴は持たず、ハッシュで同一性のみ判定）
 
