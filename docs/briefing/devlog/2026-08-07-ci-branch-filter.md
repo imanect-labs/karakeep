@@ -223,3 +223,28 @@ Statement がその env の破棄後にファイナライズされる**ときに
 つまり**同一プロセス内にネイティブアドオンの実体が複数存在する**可能性が高い。
 これは Docker イメージのビルド構成（`apps/workers` を tsdown でバンドルし、
 `/db_migrations` に別途インストールしている）に起因する。次はここを見る。
+
+---
+
+## 追記（2026-08-07・決着）
+
+**この記録の推論は途中から誤っている。** 結論は
+`docs/briefing/devlog/2026-08-07-e2e-node-2419-abort.md` を参照すること。
+
+誤りは 2 つ。
+
+1. **「`migrate.ts` が SQLite を閉じていないのが原因」は誤り。**
+   `closeDatabase()` を入れたイメージでも同じ確率で abort する。CI で 1 回
+   通ったのは偶然。
+2. **「同一プロセス内にネイティブアドオンの実体が複数ある」も誤り。**
+   実体の数は関係ない。
+
+真因は **Node 24.19.0 のリグレッション**。`node::ObjectWrap` がインスタンス
+ごとに environment cleanup hook を登録するようになり、GC のウィーク
+コールバックから走るデストラクタでは `Environment::GetCurrent(isolate)` が
+null になって `CHECK` が落ちる。`node::ObjectWrap` を継承する better-sqlite3 の
+`Database` / `Statement` が巻き添えになっていた。
+
+また、abort は「マイグレーション成功後の終了時」ではなく
+**`new Database()` の直後・`migrate()` の前**に起きている
+（abort した実行ではテーブル数が 0）。この点も本文の記述は誤り。
