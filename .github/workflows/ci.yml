@@ -2,7 +2,10 @@ name: CI
 
 on:
   pull_request:
-    branches: ["*"]
+    # `*` は `/` にマッチしない（GitHub のフィルタパターン仕様）。upstream は
+    # 常に main を base にするので気づかないが、fork のように
+    # `feat/xxx` を base にした PR は CI が一度も起動しない。
+    branches: ["**"]
   push:
     branches: ["main"]
   merge_group:
