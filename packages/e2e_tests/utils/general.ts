@@ -1,7 +1,12 @@
 export async function waitUntil(
   f: () => Promise<boolean>,
   description: string,
-  timeoutMs = 60000,
+  // 19 個のテストファイルが 1 つのコンテナを共有して並列に走るので、
+  // ワーカーの処理待ち時間は他ファイルの負荷次第で大きく振れる。
+  // 4 コアの CI ランナーでは 60 秒に収まらないことがあり
+  // （実測: 15 件のインポートが 68 秒）、処理自体は成功しているのに
+  // タイムアウトで落ちていた。vitest.config.ts の testTimeout と揃えること。
+  timeoutMs = 120000,
 ): Promise<void> {
   const startTime = Date.now();
 
