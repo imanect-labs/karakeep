@@ -74,6 +74,13 @@ const allEnv = z.object({
   INFERENCE_TEXT_MODEL: z.string().default("gpt-4.1-mini"),
   INFERENCE_IMAGE_MODEL: z.string().default("gpt-4o-mini"),
   EMBEDDING_ENABLE_AUTO_INDEXING: stringBool("false"),
+  // Embeddings get their own provider (imanect-labs fork). Upstream sends them
+  // to whatever OPENAI_BASE_URL points at, which breaks as soon as that URL is
+  // a chat-completion relay with no /embeddings route. Leave these unset to
+  // keep upstream's behaviour of reusing the inference provider.
+  EMBEDDING_PROVIDER: z.enum(["openai", "ollama"]).optional(),
+  EMBEDDING_BASE_URL: z.string().url().optional(),
+  EMBEDDING_API_KEY: z.string().optional(),
   EMBEDDING_TEXT_MODEL: z.string().default("text-embedding-3-small"),
   EMBEDDING_DIMENSIONS: z.coerce.number().default(1536),
   EMBEDDING_CONTEXT_LENGTH: z.coerce.number().int().positive().default(8000),
@@ -372,6 +379,9 @@ const serverConfigSchema = allEnv.transform((val, ctx) => {
     },
     embedding: {
       enableAutoIndexing: val.EMBEDDING_ENABLE_AUTO_INDEXING,
+      provider: val.EMBEDDING_PROVIDER,
+      baseUrl: val.EMBEDDING_BASE_URL,
+      apiKey: val.EMBEDDING_API_KEY,
       textModel: val.EMBEDDING_TEXT_MODEL,
       dimensions: val.EMBEDDING_DIMENSIONS,
       contextLength: val.EMBEDDING_CONTEXT_LENGTH,
