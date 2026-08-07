@@ -659,6 +659,13 @@
       "when": 1785243383935,
       "tag": "0093_graceful_silver_samurai",
       "breakpoints": true
+    },
+    {
+      "idx": 94,
+      "version": "6",
+      "when": 1786066176535,
+      "tag": "0094_recommender_tables",
+      "breakpoints": true
     }
   ]
 }
