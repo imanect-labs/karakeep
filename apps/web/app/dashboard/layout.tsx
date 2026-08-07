@@ -16,6 +16,7 @@ import {
   Highlighter,
   Home,
   Search,
+  Sparkles,
   Tag,
 } from "lucide-react";
 
@@ -80,6 +81,12 @@ export default async function Dashboard({
         name: t("common.highlights"),
         icon: <Highlighter size={18} />,
         path: "/dashboard/highlights",
+      },
+      // imanect-labs fork: briefing recommender.
+      {
+        name: t("common.briefing"),
+        icon: <Sparkles size={18} />,
+        path: "/dashboard/briefing",
       },
       {
         name: t("common.archive"),

@@ -57,7 +57,10 @@ export async function runEmbed(
       : and(
           eq(recCandidates.userId, userId),
           eq(recCandidates.embeddingStatus, "pending"),
-          eq(recCandidates.status, "active"),
+          // `active` に絞らない。ブートストラップした既存ブックマークは
+          // `promoted` で入るので、絞ると**新規性の特徴量が永久に 0 になる**
+          // （比較相手のライブラリ埋め込みが 1 件も作られない）。
+          ne(recCandidates.status, "expired"),
         ),
     columns: {
       id: true,

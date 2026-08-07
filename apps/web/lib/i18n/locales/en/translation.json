@@ -43,7 +43,8 @@
     },
     "quota": "Quota",
     "bookmarks": "Bookmarks",
-    "storage": "Storage"
+    "storage": "Storage",
+    "briefing": "Briefing"
   },
   "layouts": {
     "masonry": "Masonry",
@@ -374,6 +375,10 @@
           "prompts": {
             "label": "Prompts",
             "description": "Manage saved AI prompt configuration."
+          },
+          "recommender": {
+            "label": "Recommender",
+            "description": "Access the briefing recommender"
           },
           "rules": {
             "label": "Rules",

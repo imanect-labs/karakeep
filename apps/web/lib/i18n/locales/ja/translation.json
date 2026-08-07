@@ -409,6 +409,10 @@
             "label": "プロンプト",
             "description": "保存されたAIプロンプト設定を管理します。"
           },
+          "recommender": {
+            "label": "レコメンダー",
+            "description": "Briefing レコメンダーへのアクセス"
+          },
           "rules": {
             "label": "ルール",
             "description": "オートメーションルールにアクセスします。"
@@ -785,7 +789,8 @@
     "pdf": "アーカイブ済みPDF",
     "default": "既定",
     "id": "ID",
-    "last_used": "最後に使用"
+    "last_used": "最後に使用",
+    "briefing": "Briefing"
   },
   "layouts": {
     "grid": "グリッド",

@@ -1,4 +1,5 @@
 import {
+  recommenderBriefingsCounter,
   recommenderCandidatesCounter,
   recommenderDomainsCounter,
   recommenderEmbeddingsCounter,
@@ -23,10 +24,12 @@ import serverConfig from "@karakeep/shared/config";
 import logger from "@karakeep/shared/logger";
 import { DequeuedJob, getQueueClient } from "@karakeep/shared/queueing";
 
+import { runBootstrap } from "./bootstrap";
 import { runCollect } from "./collect";
 import { runDiscover } from "./discover";
 import { runEmbed } from "./embed";
 import { runMaintain } from "./maintain";
+import { runRank } from "./rank";
 import { recommenderUserIds } from "./shared";
 
 /**
@@ -76,10 +79,18 @@ async function runRecommenderTask(job: DequeuedJob<ZRecommenderTask>) {
       recommenderDomainsCounter.labels("demoted").inc(result.demoted);
       return;
     }
-    case "rank":
-    case "train":
-    case "reward_join":
+    case "rank": {
+      const result = await runRank(task.userId, task.briefingDate, jobId);
+      recommenderBriefingsCounter.labels(result.modelVersion).inc();
+      logger.info(`[recommender][rank][${jobId}] ${JSON.stringify(result)}`);
+      return;
+    }
     case "bootstrap": {
+      await runBootstrap(task.userId, task.limit, jobId);
+      return;
+    }
+    case "train":
+    case "reward_join": {
       logger.warn(
         `[recommender][${jobId}] task "${task.type}" is not implemented yet, skipping`,
       );

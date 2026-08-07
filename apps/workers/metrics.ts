@@ -42,6 +42,12 @@ export const recommenderSourceFailuresCounter = new Counter({
   help: "Source fetches that failed during collection",
 });
 
+export const recommenderBriefingsCounter = new Counter({
+  name: "karakeep_recommender_briefings_total",
+  help: "Briefings generated, by model version",
+  labelNames: ["model_version"],
+});
+
 export const recommenderDomainsCounter = new Counter({
   name: "karakeep_recommender_domains_total",
   help: "Domain lifecycle transitions in the recommender",
@@ -57,6 +63,7 @@ export const recommenderEmbeddingsCounter = new Counter({
 registry.registerMetric(workerStatsCounter);
 registry.registerMetric(recommenderCandidatesCounter);
 registry.registerMetric(recommenderSourceFailuresCounter);
+registry.registerMetric(recommenderBriefingsCounter);
 registry.registerMetric(recommenderDomainsCounter);
 registry.registerMetric(recommenderEmbeddingsCounter);
 registry.registerMetric(crawlerStatusCodeCounter);
