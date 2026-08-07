@@ -7,7 +7,10 @@ runs:
     - uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6
     - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
       with:
-        node-version: 24
+        # 24.19.0 の node::ObjectWrap 変更で better-sqlite3 が GC 時に
+        # abort する。理由は docker/Dockerfile のコメントを参照。
+        # ここのユニットテストも better-sqlite3 を使うので同じく 24.18 に固定する。
+        node-version: 24.18
         cache: "pnpm"
         registry-url: https://registry.npmjs.org
 

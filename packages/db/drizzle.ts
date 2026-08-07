@@ -31,12 +31,8 @@ export type DB = typeof db;
 /**
  * SQLite のハンドルを明示的に閉じる。
  *
- * 閉じずにプロセスを終えると、better-sqlite3 の `Statement` が Node の
- * 環境破棄後にファイナライズされ、`RemoveEnvironmentCleanupHook(env=nullptr)`
- * で abort する（exit 134）。プリペアドステートメントが多いほど確実に踏む。
- *
- * 長生きするプロセス（web / workers）は終了時に OS がまとめて片付けるので
- * 問題にならないが、**短命なスクリプトは必ずこれを呼ぶこと**。
+ * 短命なスクリプト（マイグレーションなど）や、終了処理を持つプロセスから
+ * 呼ぶ。WAL のチェックポイントを終了前に確実に走らせるため。
  */
 export function closeDatabase() {
   sqlite.close();

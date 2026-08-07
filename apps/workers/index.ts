@@ -210,9 +210,7 @@ async function main() {
   await httpServer.stop();
   await shutdownEventLogger();
   await shutdownTracing();
-  // better-sqlite3 の Statement を Node の環境が生きているうちに finalize
-  // させる。閉じずに落とすと env 破棄後にデストラクタが走って abort する
-  // （exit 134）。プリペアドステートメントが多いほど確実に踏む。
+  // 終了前に WAL のチェックポイントを走らせる。
   closeDatabase();
   process.exit(0);
 }
