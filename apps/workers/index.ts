@@ -116,7 +116,18 @@ type WorkerName = keyof typeof workerBuilders | "import";
 const enabledWorkers = new Set(serverConfig.workers.enabledWorkers);
 const disabledWorkers = new Set(serverConfig.workers.disabledWorkers);
 
+// 推薦機能のキューランナー。RECOMMENDER_ENABLED が false のあいだは
+// そもそも起動しない。無効な機能のためにポーリングを 2 本回す理由がなく、
+// 既存デプロイのワーカープロセスに一切触れないようにするため。
+const recommenderWorkers = new Set<WorkerName>([
+  "recommender",
+  "recommenderEmbed",
+]);
+
 function isWorkerEnabled(name: WorkerName) {
+  if (recommenderWorkers.has(name) && !serverConfig.recommender.enabled) {
+    return false;
+  }
   if (enabledWorkers.size > 0 && !enabledWorkers.has(name)) {
     return false;
   }
