@@ -15,6 +15,8 @@ import {
   LowPriorityCrawlerQueue,
   OpenAIQueue,
   prepareQueue,
+  RecommenderEmbedQueue,
+  RecommenderQueue,
   RuleEngineQueue,
   SearchIndexingQueue,
   shutdownEventLogger,
@@ -36,6 +38,11 @@ import { EmbeddingsWorker } from "./workers/embeddingsWorker";
 import { FeedRefreshingWorker, FeedWorker } from "./workers/feedWorker";
 import { ImportWorker } from "./workers/importWorker";
 import { OpenAiWorker } from "./workers/inference/inferenceWorker";
+import {
+  RecommenderEmbedWorker,
+  RecommenderSchedulingWorker,
+  RecommenderWorker,
+} from "./workers/recommender";
 import { RuleEngineWorker } from "./workers/ruleEngineWorker";
 import { SearchIndexingWorker } from "./workers/searchWorker";
 import { TranslationWorker } from "./workers/translation/translationWorker";
@@ -95,6 +102,14 @@ const workerBuilders = {
     await BackupQueue.ensureInit();
     return BackupWorker.build();
   },
+  recommender: async () => {
+    await RecommenderQueue.ensureInit();
+    return RecommenderWorker.build();
+  },
+  recommenderEmbed: async () => {
+    await RecommenderEmbedQueue.ensureInit();
+    return RecommenderEmbedWorker.build();
+  },
 } as const;
 
 type WorkerName = keyof typeof workerBuilders | "import";
@@ -139,6 +154,10 @@ async function main() {
     BackupSchedulingWorker.start();
   }
 
+  if (workers.some((w) => w.name === "recommender")) {
+    RecommenderSchedulingWorker.start();
+  }
+
   // Start import polling worker
   let importWorker: ImportWorker | null = null;
   let importWorkerPromise: Promise<void> | null = null;
@@ -165,6 +184,9 @@ async function main() {
   }
   if (workers.some((w) => w.name === "backup")) {
     BackupSchedulingWorker.stop();
+  }
+  if (workers.some((w) => w.name === "recommender")) {
+    RecommenderSchedulingWorker.stop();
   }
   if (importWorker) {
     importWorker.stop();

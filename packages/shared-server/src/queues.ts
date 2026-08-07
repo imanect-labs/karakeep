@@ -190,6 +190,60 @@ export const EmbeddingsQueue = createDeferredQueue<ZEmbeddingsRequest>(
   },
 );
 
+// Briefing Recommender (imanect-labs fork)
+//
+// 日次バッチのパイプラインを 1 本のキューに載せる。discover -> collect ->
+// embed -> rank は時刻をずらして走るので、直列でも待ち時間にならない。
+// 埋め込みだけは 1 ジョブが長くなるので別キューに分け、並列度を独立させる。
+export const zRecommenderTaskSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("discover"), userId: z.string() }),
+  z.object({ type: z.literal("collect"), userId: z.string() }),
+  z.object({
+    type: z.literal("rank"),
+    userId: z.string(),
+    briefingDate: z.string().optional(),
+  }),
+  z.object({ type: z.literal("train"), userId: z.string() }),
+  z.object({ type: z.literal("reward_join"), userId: z.string() }),
+  // 候補の expire / purge、取得頻度の層の振り直し、観測状態の確定。
+  z.object({ type: z.literal("maintain"), userId: z.string() }),
+  // 既存ブックマークを候補プールへ取り込む初期化（FR-F-04）。
+  z.object({
+    type: z.literal("bootstrap"),
+    userId: z.string(),
+    limit: z.number().optional(),
+  }),
+]);
+export type ZRecommenderTask = z.infer<typeof zRecommenderTaskSchema>;
+
+export const RecommenderQueue = createDeferredQueue<ZRecommenderTask>(
+  "recommender_queue",
+  {
+    defaultJobArgs: {
+      // 日次バッチなので、失敗しても翌日また走る。再試行は 1 回で足りる。
+      numRetries: 1,
+    },
+    keepFailedJobs: false,
+  },
+);
+
+export const zRecommenderEmbedTaskSchema = z.object({
+  userId: z.string(),
+  // 省略すると embeddingStatus='pending' の候補を拾う。
+  candidateIds: z.array(z.string()).optional(),
+});
+export type ZRecommenderEmbedTask = z.infer<typeof zRecommenderEmbedTaskSchema>;
+
+export const RecommenderEmbedQueue = createDeferredQueue<ZRecommenderEmbedTask>(
+  "recommender_embed_queue",
+  {
+    defaultJobArgs: {
+      numRetries: 2,
+    },
+    keepFailedJobs: false,
+  },
+);
+
 // Search Indexing Worker
 export const zSearchIndexingRequestSchema = z.object({
   bookmarkId: z.string(),

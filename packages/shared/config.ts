@@ -95,6 +95,49 @@ const allEnv = z.object({
     .default("structured"),
   INFERENCE_ENABLE_AUTO_TAGGING: stringBool("true"),
   INFERENCE_ENABLE_AUTO_SUMMARIZATION: stringBool("false"),
+  // Briefing Recommender (imanect-labs fork). 既定値は ROADMAP の
+  // 「段階的な有効化」前半 2 週（trial 0% / random 15%）に合わせてある。
+  // trial を 10% に上げるのは config の変更だけで済ませる。
+  RECOMMENDER_ENABLED: stringBool("false"),
+  RECOMMENDER_CONTACT_URL: z.string().optional(),
+  RECOMMENDER_NUM_WORKERS: z.coerce.number().default(1),
+  RECOMMENDER_JOB_TIMEOUT_SEC: z.coerce.number().default(900),
+  RECOMMENDER_DAILY_INTAKE_CAP: z.coerce.number().int().positive().default(400),
+  RECOMMENDER_PER_SOURCE_FETCH_LIMIT: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(60),
+  RECOMMENDER_BRIEFING_SIZE: z.coerce.number().int().positive().default(20),
+  RECOMMENDER_CANDIDATE_TTL_DAYS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(14),
+  RECOMMENDER_CANDIDATE_PURGE_DAYS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(90),
+  RECOMMENDER_DOMAIN_SEATS: z.coerce.number().int().positive().default(80),
+  RECOMMENDER_MAX_TRIAL_DOMAINS: z.coerce.number().int().positive().default(10),
+  RECOMMENDER_ARM_EXPLOIT: z.coerce.number().default(0.55),
+  RECOMMENDER_ARM_ADJACENT: z.coerce.number().default(0.2),
+  RECOMMENDER_ARM_UNCERTAIN: z.coerce.number().default(0.1),
+  RECOMMENDER_ARM_TRIAL: z.coerce.number().default(0),
+  RECOMMENDER_ARM_RANDOM: z.coerce.number().default(0.15),
+  RECOMMENDER_SOFTMAX_TEMPERATURE: z.coerce.number().positive().default(0.15),
+  RECOMMENDER_EMBEDDING_DIMENSIONS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .optional(),
+  RECOMMENDER_EMBED_BATCH_SIZE: z.coerce.number().int().positive().default(16),
+  RECOMMENDER_DISCOVER_CRON: z.string().default("30 3 * * *"),
+  RECOMMENDER_COLLECT_CRON: z.string().default("0 4 * * *"),
+  RECOMMENDER_RANK_CRON: z.string().default("30 5 * * *"),
+  RECOMMENDER_TRAIN_CRON: z.string().default("0 3 * * *"),
+  RECOMMENDER_MAINTAIN_CRON: z.string().default("0 2 * * *"),
   OCR_CACHE_DIR: z.string().optional(),
   OCR_LANGS: z
     .string()
@@ -387,6 +430,36 @@ const serverConfigSchema = allEnv.transform((val, ctx) => {
       contextLength: val.EMBEDDING_CONTEXT_LENGTH,
       numWorkers: val.EMBEDDING_NUM_WORKERS,
       jobTimeoutSec: val.EMBEDDING_JOB_TIMEOUT_SEC,
+    },
+    recommender: {
+      enabled: val.RECOMMENDER_ENABLED,
+      contactUrl: val.RECOMMENDER_CONTACT_URL,
+      numWorkers: val.RECOMMENDER_NUM_WORKERS,
+      jobTimeoutSec: val.RECOMMENDER_JOB_TIMEOUT_SEC,
+      dailyIntakeCap: val.RECOMMENDER_DAILY_INTAKE_CAP,
+      perSourceFetchLimit: val.RECOMMENDER_PER_SOURCE_FETCH_LIMIT,
+      briefingSize: val.RECOMMENDER_BRIEFING_SIZE,
+      candidateTtlDays: val.RECOMMENDER_CANDIDATE_TTL_DAYS,
+      candidatePurgeDays: val.RECOMMENDER_CANDIDATE_PURGE_DAYS,
+      domainSeats: val.RECOMMENDER_DOMAIN_SEATS,
+      maxTrialDomains: val.RECOMMENDER_MAX_TRIAL_DOMAINS,
+      arms: {
+        exploit: val.RECOMMENDER_ARM_EXPLOIT,
+        adjacent: val.RECOMMENDER_ARM_ADJACENT,
+        uncertain: val.RECOMMENDER_ARM_UNCERTAIN,
+        trial: val.RECOMMENDER_ARM_TRIAL,
+        random: val.RECOMMENDER_ARM_RANDOM,
+      },
+      softmaxTemperature: val.RECOMMENDER_SOFTMAX_TEMPERATURE,
+      embeddingDimensions: val.RECOMMENDER_EMBEDDING_DIMENSIONS,
+      embedBatchSize: val.RECOMMENDER_EMBED_BATCH_SIZE,
+      cron: {
+        discover: val.RECOMMENDER_DISCOVER_CRON,
+        collect: val.RECOMMENDER_COLLECT_CRON,
+        rank: val.RECOMMENDER_RANK_CRON,
+        train: val.RECOMMENDER_TRAIN_CRON,
+        maintain: val.RECOMMENDER_MAINTAIN_CRON,
+      },
     },
     crawler: {
       numWorkers: val.CRAWLER_NUM_WORKERS,

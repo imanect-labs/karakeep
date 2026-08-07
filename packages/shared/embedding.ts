@@ -69,6 +69,11 @@ class OpenAICompatibleEmbeddingClient implements EmbeddingClient {
     const response = await this.openAI.embeddings.create({
       model: this.model,
       input: inputs,
+      // `encoding_format` を明示しないと OpenAI SDK が既定で "base64" を送り、
+      // 返ってきた値を無条件に base64 として復号する。素の float 配列を返す
+      // 実装（Ollama の /v1/embeddings、TEI、多くのローカルサーバ）に当てると、
+      // **エラーにならずに壊れたベクトルが返る**。
+      encoding_format: "float",
     });
     return {
       embeddings: parseEmbeddingResponse(response),

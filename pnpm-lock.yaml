@@ -885,6 +885,9 @@ importers:
       '@karakeep/db':
         specifier: workspace:^0.1.0
         version: link:../../packages/db
+      '@karakeep/recommender':
+        specifier: workspace:^0.1.0
+        version: link:../../packages/recommender
       '@karakeep/shared':
         specifier: workspace:^0.1.0
         version: link:../../packages/shared

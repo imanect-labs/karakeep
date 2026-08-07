@@ -12,6 +12,12 @@ export interface EmbeddedDocument {
   input: string;
 }
 
+/**
+ * これを下回る次元の埋め込みモデルは存在しない。壊れたレスポンスを検出する
+ * ための下限であって、対応次元の宣言ではない。
+ */
+const MIN_PLAUSIBLE_DIMENSIONS = 16;
+
 export interface EmbedOptions {
   /**
    * MRL による切り詰め先の次元。省略するとモデルの素の次元をそのまま使う。
@@ -54,6 +60,25 @@ export async function embedDocuments(
     throw new Error(
       `Embedding provider returned ${response.embeddings.length} vectors for ${inputs.length} inputs`,
     );
+  }
+
+  // 埋め込みが壊れて返ってくる経路は、例外ではなく「短いベクトル」として
+  // 現れることがある（プロバイダが encoding_format を無視した、レスポンスの
+  // 形が違う等）。次元数を検算しないと、無意味なベクトルが候補プールに
+  // 溜まり続け、推薦が静かに壊れる。
+  for (const raw of response.embeddings) {
+    if (raw.length < MIN_PLAUSIBLE_DIMENSIONS) {
+      throw new Error(
+        `Embedding provider returned a ${raw.length}-dim vector, which is too small to be real. ` +
+          `Check that the provider honours encoding_format and returns float arrays.`,
+      );
+    }
+    if (raw.length !== response.embeddings[0].length) {
+      throw new Error(
+        `Embedding provider returned vectors of inconsistent dimensions ` +
+          `(${response.embeddings[0].length} and ${raw.length})`,
+      );
+    }
   }
 
   response.embeddings.forEach((raw, i) => {
