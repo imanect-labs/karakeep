@@ -1,5 +1,6 @@
 import {
   recommenderCandidatesCounter,
+  recommenderDomainsCounter,
   recommenderEmbeddingsCounter,
   recommenderSourceFailuresCounter,
   workerStatsCounter,
@@ -23,6 +24,7 @@ import logger from "@karakeep/shared/logger";
 import { DequeuedJob, getQueueClient } from "@karakeep/shared/queueing";
 
 import { runCollect } from "./collect";
+import { runDiscover } from "./discover";
 import { runEmbed } from "./embed";
 import { runMaintain } from "./maintain";
 import { recommenderUserIds } from "./shared";
@@ -63,7 +65,17 @@ async function runRecommenderTask(job: DequeuedJob<ZRecommenderTask>) {
       await runMaintain(task.userId, jobId);
       return;
     }
-    case "discover":
+    case "discover": {
+      const result = await runDiscover(task.userId, jobId);
+      addLogFields<"recommenderWorker.run">({
+        "recommender.new_domains": result.backfilled + result.fromOutboundLinks,
+      });
+      recommenderDomainsCounter.labels("screened").inc(result.screened);
+      recommenderDomainsCounter.labels("trial").inc(result.trialsStarted);
+      recommenderDomainsCounter.labels("promoted").inc(result.promoted);
+      recommenderDomainsCounter.labels("demoted").inc(result.demoted);
+      return;
+    }
     case "rank":
     case "train":
     case "reward_join":
