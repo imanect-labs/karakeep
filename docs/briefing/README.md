@@ -19,7 +19,7 @@ LLM は学習の主体ではない。**LLM はオーケストレーター、推�
 
 | 必要なもの | karakeep の既存資産 |
 |---|---|
-| 埋め込み生成 | `apps/workers/workers/embeddingsWorker.ts` + `InferenceClientFactory` |
+| 埋め込み生成 | `apps/workers/workers/embeddingsWorker.ts` + `InferenceClientFactory`（※ 埋め込み用プロバイダの分離が必要 — 後述） |
 | ベクトル格納 | `packages/plugins/vectorstore-meilisearch`（Meilisearch は既にクラスタで稼働） |
 | ジョブキュー | `packages/plugins/queue-liteque`（SQLite ベース、追加ミドルウェア不要） |
 | RSS 取得 | `apps/workers/workers/feedWorker.ts` |
@@ -33,6 +33,14 @@ LLM は学習の主体ではない。**LLM はオーケストレーター、推�
 | LLM 連携口 | `apps/mcp`（MCP サーバ。briefing エージェントに Tool を生やせる） |
 
 **最大の利点はコールドスタートの解消**にある。既存のブックマーク・お気に入り・タグ・読了進捗が、初日から学習データになる。ゼロから始める独立サービスにはこれがない。
+
+### ただし埋め込みだけは現状のままでは動かない
+
+現在の `openaiBaseUrl` は OpenCode Go（チャット補完のリレー）を指しており、`/embeddings` は提供されていない。しかも `InferenceClientFactory` はプロバイダを 1 つしか選べないため、「チャットは OpenCode Go、埋め込みは Ollama」という併用ができない。`EMBEDDING_ENABLE_AUTO_INDEXING` も既定 `false` のままなので、**今は埋め込みが 1 件も生成されていない**。
+
+そのため Phase 0 の最初の作業は、fork に埋め込み専用のプロバイダ設定（`EMBEDDING_BASE_URL` / `EMBEDDING_API_KEY`）を足すことになる。env の追加とクライアント 1 個で済み、追加のみの方針に収まる。
+
+埋め込みモデルは **EmbeddingGemma-300m（768 次元）を Ollama で自ホスト**する。選定理由と代替案は [requirements.md](./requirements.md) の §10 を参照。要点は、この設計で最優先の要件が**日英のクロスリンガル整合**であること — プロフィール重心は日本語記事と英語記事を混ぜて作るので、言語で空間が分かれるモデルを使うと `cos(候補, プロフィール)` が話題ではなく言語を測ってしまう。
 
 ## 何を作らないか
 
@@ -315,7 +323,9 @@ packages/recommender/          # 新規パッケージ（モデル・特徴量�
   src/domain/lifecycle.ts      #   ドメインの状態遷移と昇格・降格判定
   src/domain/quality.ts        #   品質ゲート
   src/discovery/*.ts           #   発見チャネル D1〜D10（プラグイン形式）
-  src/vector.ts                #   Float32 BLOB のシリアライズ・総当たりコサイン
+  src/vector.ts                #   Float32 BLOB のシリアライズ・正規化・総当たり内積
+  src/embedding/client.ts      #   埋め込み専用プロバイダ (EMBEDDING_BASE_URL)
+  src/embedding/format.ts      #   "title: … | text: …" への整形と 2048 トークン切り詰め
 
 apps/workers/workers/recommender/
   discoverWorker.ts            #   ソース発見
@@ -368,4 +378,6 @@ pnpm --filter @karakeep/workers run start   # ワーカーのみ
 
 giken-ops の ArgoCD で管理している karakeep スタックにそのまま乗る。この fork をビルドして GHCR に push し、`gitops/apps/karakeep/values.yaml` の `web.image.tag` を sha タグでピン止めする流れは既存のとおり。
 
-推薦機能は SQLite / Meilisearch / liteque を既存インスタンスと共有するため、**新しいミドルウェアの追加は不要**。ストレージ増分は候補プール約 30 MB + 年間ログ約 50 MB を見込む。
+推薦機能は SQLite / Meilisearch / liteque を既存インスタンスと共有する。ストレージ増分は候補プール約 15 MB + 年間ログ約 50 MB を見込む。
+
+追加が必要なのは**埋め込み用の Ollama 1 つだけ**（requests 1Gi / limits 2Gi）。EmbeddingGemma は量子化済みで 622 MB なので、worker-1 に余裕で載る。
