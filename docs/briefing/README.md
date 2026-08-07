@@ -38,7 +38,7 @@ LLM は学習の主体ではない。**LLM はオーケストレーター、推�
 
 現在の `openaiBaseUrl` は OpenCode Go（チャット補完のリレー）を指しており、`/embeddings` は提供されていない。しかも `InferenceClientFactory` はプロバイダを 1 つしか選べないため、「チャットは OpenCode Go、埋め込みは Ollama」という併用ができない。`EMBEDDING_ENABLE_AUTO_INDEXING` も既定 `false` のままなので、**今は埋め込みが 1 件も生成されていない**。
 
-そのため Phase 0 の最初の作業は、fork に埋め込み専用のプロバイダ設定（`EMBEDDING_BASE_URL` / `EMBEDDING_API_KEY`）を足すことになる。env の追加とクライアント 1 個で済み、追加のみの方針に収まる。
+そのため Phase 1 の最初の作業は、fork に埋め込み専用のプロバイダ設定（`EMBEDDING_BASE_URL` / `EMBEDDING_API_KEY`）を足すことになる。env の追加とクライアント 1 個で済み、追加のみの方針に収まる。
 
 埋め込みモデルは **EmbeddingGemma-300m（768 次元）を Ollama で自ホスト**する。選定理由と代替案は [requirements.md](./requirements.md) の §10 を参照。要点は、この設計で最優先の要件が**日英のクロスリンガル整合**であること — プロフィール重心は日本語記事と英語記事を混ぜて作るので、言語で空間が分かれるモデルを使うと `cos(候補, プロフィール)` が話題ではなく言語を測ってしまう。
 
@@ -149,11 +149,11 @@ RSS で購読しているサイト、Hacker News、arXiv、GitHub — この母�
 
 ### ソース発見のチャネル
 
-新しいドメインを見つける手段を、実装コストと期待値の順に並べる。既存データだけで回せるものから始める。
+新しいドメインを見つける手段を、実装コストと期待値の順に並べる。**D1〜D4 は機械学習を必要とせず、既存データと公開 API だけで動く**ので Phase 1 に含める。
 
 | ID | チャネル | 入力 | 実装コスト | フェーズ |
 |---|---|---|---|---|
-| D1 | **既存ブックマークのドメイン逆引き** — 手で保存したことがあるのに購読していないドメイン | `bookmarkLinks.url` | 極小 | 0 |
+| D1 | **既存ブックマークのドメイン逆引き** — 手で保存したことがあるのに購読していないドメイン | `bookmarkLinks.url` | 極小 | 1 |
 | D2 | **高評価記事の外部リンク抽出** — 保存した記事が繰り返しリンクするドメイン | `bookmarkLinks.htmlContent` | 小 | 1 |
 | D3 | **フィード自動発見** — `<link rel="alternate">` と慣例パスの探索 | 発見済みドメイン | 小 | 1 |
 | D4 | **アグリゲータのドメインサンプリング** — HN / Lobsters を「記事源」ではなく「ドメイン標本」として使う | HN / Lobsters API | 小 | 1 |
@@ -316,7 +316,7 @@ upstream への追従を壊さないため、**追加のみ**を原則とする�
 packages/recommender/          # 新規パッケージ（モデル・特徴量・スコアリング）
   src/features.ts              #   特徴量抽出
   src/model/logreg.ts          #   ベイジアンロジスティック回帰（依存なし）
-  src/model/heuristic.ts       #   Phase 1 のスコアリング
+  src/model/heuristic.ts       #   学習前の決め打ちスコアリング
   src/profile.ts               #   4 種プロフィールの更新
   src/reward.ts                #   報酬分解と重み設定
   src/pairs.ts                 #   同一 Briefing 内のペア生成
