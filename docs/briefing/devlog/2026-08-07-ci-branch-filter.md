@@ -169,3 +169,57 @@ web コンテナが実行中に落ちている。起動は通るようになっ�
 3. `0094` を複数のマイグレーションに分割してステートメント数を減らす
 
 **PR #10 は CI red のまま。マージ不可。**
+
+---
+
+## 到達点（安定化の途中経過）
+
+### 効いた修正
+
+`migrate.ts` の `closeDatabase()` が本命だった。
+
+| 指標 | 修正前 | 修正後 | ベースライン |
+|---|---|---|---|
+| `unable to start service init-db-migration` | あり | **0** | 0 |
+| workers 再起動 | 20 | **7** | 5 |
+| assertion | 25 | **7** | 9 |
+| tags API テスト | 5/5 失敗 | **全 pass** | — |
+
+**ブランチはベースラインと同水準に戻った。**
+
+### 残っているのは upstream 由来のクラッシュ
+
+ワーカープロセスは今も起動直後に abort する。毎回まったく同じ形で、
+エラーログは一切出ない。
+
+```
+Starting backup worker ...
+Listening on http://127.0.0.1:44163
+  #  Assertion failed: (env) != nullptr
+```
+
+**これはベースラインにも 5 回出る。** E2E が元々 50% 程度で落ちる原因そのもの
+であり、この機能が持ち込んだものではない。
+
+### 潰した仮説
+
+- **推薦ワーカーのキューランナー** — 起動を止めてもクラッシュ継続（外れ）
+- **`rec*` スキーマ追加そのもの** — ベースラインにも同じ assertion（外れ。
+  ただし頻度は約 3 倍に増やしていた）
+- **better-sqlite3 のバージョン上げ** — 11.4 以降と 12.x は非同期
+  トランザクションを拒否する。`db.transaction(async ...)` を使う既存コードが
+  全滅（trpc テスト 419 件中 244 件失敗）。**11.3.0 に留めるしかない**
+- **liteque クライアントの重複生成** — `LitequeQueueProvider` はクライアントを
+  キャッシュしており、`queue.db` のハンドルは 1 プロセス 1 本（外れ）
+
+### 次に見るべき場所
+
+`RemoveEnvironmentCleanupHook(env=nullptr)` は、**別の napi_env で作られた
+Statement がその env の破棄後にファイナライズされる**ときに出る。
+クラッシュ時のスタックは
+`/app/apps/workers/node_modules/.pnpm/better-sqlite3@11.3.0/...` を指し、
+マイグレーション時は `/db_migrations/.../better_sqlite3.node` を指していた。
+
+つまり**同一プロセス内にネイティブアドオンの実体が複数存在する**可能性が高い。
+これは Docker イメージのビルド構成（`apps/workers` を tsdown でバンドルし、
+`/db_migrations` に別途インストールしている）に起因する。次はここを見る。
