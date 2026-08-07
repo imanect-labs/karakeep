@@ -28,6 +28,7 @@ import { runBootstrap } from "./bootstrap";
 import { runCollect } from "./collect";
 import { runDiscover } from "./discover";
 import { runEmbed } from "./embed";
+import { requeueUnobserved, runRewardJoin } from "./feedback";
 import { runMaintain } from "./maintain";
 import { runRank } from "./rank";
 import { recommenderUserIds } from "./shared";
@@ -89,10 +90,18 @@ async function runRecommenderTask(job: DequeuedJob<ZRecommenderTask>) {
       await runBootstrap(task.userId, task.limit, jobId);
       return;
     }
-    case "train":
     case "reward_join": {
-      logger.warn(
-        `[recommender][${jobId}] task "${task.type}" is not implemented yet, skipping`,
+      const result = await runRewardJoin(task.userId, jobId);
+      const requeued = await requeueUnobserved(task.userId, new Date());
+      logger.info(
+        `[recommender][reward][${jobId}] ${JSON.stringify(result)}, requeued ${requeued}`,
+      );
+      return;
+    }
+    case "train": {
+      // Phase 2。ログが貯まるまで学習しない（FR-L-07）。
+      logger.info(
+        `[recommender][${jobId}] training starts in Phase 2, nothing to do yet`,
       );
       return;
     }
@@ -228,6 +237,9 @@ export const RecommenderSchedulingWorker = {
     const { cron: schedule } = serverConfig.recommender;
     this.tasks = [
       scheduleDaily(schedule.maintain, "maintain"),
+      // 観測状態と examined の確定は、その日の収集より前に済ませる。
+      // 順番が逆だと、当日の impression が未確定のまま集計に入る。
+      scheduleDaily(schedule.maintain, "reward_join"),
       scheduleDaily(schedule.train, "train"),
       scheduleDaily(schedule.discover, "discover"),
       scheduleDaily(schedule.collect, "collect"),

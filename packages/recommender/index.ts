@@ -6,6 +6,7 @@ export * from "./src/cluster";
 export * from "./src/bandit";
 export * from "./src/arms";
 export * from "./src/profile";
+export * from "./src/reward";
 export * from "./src/model/heuristic";
 export * from "./src/domain/lifecycle";
 export * from "./src/domain/quality";
