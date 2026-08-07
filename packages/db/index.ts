@@ -4,7 +4,7 @@ import { SQLiteTransaction } from "drizzle-orm/sqlite-core";
 
 import * as schema from "./schema";
 
-export { db } from "./drizzle";
+export { closeDatabase, db } from "./drizzle";
 export type { DB } from "./drizzle";
 export * as schema from "./schema";
 export { SqliteError } from "better-sqlite3";
