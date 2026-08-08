@@ -50,6 +50,10 @@ type EventLogInternal =
       // and chunks kept despite still failing it after the last attempt.
       "translation.retried_chunks"?: number;
       "translation.degraded_chunks"?: number;
+      // TRANSLATION_PROVIDER=local のときだけ。訳したテキストノードの数と、
+      // 訳せずに原文のまま残した数。
+      "translation.text_nodes"?: number;
+      "translation.text_nodes_failed"?: number;
     }
   | {
       ["event.name"]: "bookmark.summarize";
