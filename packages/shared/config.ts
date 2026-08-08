@@ -233,6 +233,22 @@ const allEnv = z.object({
   // Skip translation when the content already looks like the target language
   // (avoids re-translating e.g. Japanese pages). Uses a CJK/kana ratio heuristic.
   TRANSLATION_SKIP_IF_TARGET: stringBool("true"),
+  // どこで訳すか (imanect-labs fork)。
+  //   external … OPENAI_BASE_URL に HTML チャンクを丸ごと渡す（従来）
+  //   local    … クラスタ内 Ollama に**素テキストだけ**渡す。タグは
+  //              コード側で保存するので、構造保持をモデルに頼らない。
+  //              ローカルの 4B 級は HTML を渡すと必ず壊すため（実測）。
+  TRANSLATION_PROVIDER: z.enum(["external", "local"]).default("external"),
+  TRANSLATION_LOCAL_MODEL: z
+    .string()
+    .default("hf.co/mradermacher/CAT-Translate-3.3b-beta-GGUF:Q4_K_M"),
+  // 1 テキストノードあたりの最大出力トークン。日本語は英語より
+  // トークン効率が悪いので、入力文字数に対して余裕を持たせる。
+  TRANSLATION_LOCAL_MAX_TOKENS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(1024),
   WEBHOOK_TIMEOUT_SEC: z.coerce.number().default(5),
   WEBHOOK_RETRY_TIMES: z.coerce.number().int().min(0).default(3),
   MAX_RSS_FEEDS_PER_USER: z.coerce.number().default(1000),
@@ -432,6 +448,9 @@ const serverConfigSchema = allEnv.transform((val, ctx) => {
       chunkTokens: val.TRANSLATION_CHUNK_TOKENS,
       maxChunkAttempts: val.TRANSLATION_MAX_CHUNK_ATTEMPTS,
       skipIfTarget: val.TRANSLATION_SKIP_IF_TARGET,
+      provider: val.TRANSLATION_PROVIDER,
+      localModel: val.TRANSLATION_LOCAL_MODEL,
+      localMaxTokens: val.TRANSLATION_LOCAL_MAX_TOKENS,
     },
     chat: {
       enabled: val.CHAT_ENABLED,

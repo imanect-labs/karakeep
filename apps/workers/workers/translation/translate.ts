@@ -16,6 +16,7 @@ import { DequeuedJob } from "@karakeep/shared/queueing";
 import { BookmarkTypes } from "@karakeep/shared/types/bookmarks";
 import { Bookmark } from "@karakeep/trpc/models/bookmarks";
 
+import { buildLocalTranslator, translateChunkLocally } from "./localChunk";
 import {
   cjkRatio,
   findChunkProblems,
@@ -312,53 +313,94 @@ export async function runTranslation(
   const targetIsJapanese = targetLang.trim().toLowerCase() === "japanese";
   const maxAttempts = serverConfig.translation.maxChunkAttempts;
 
+  // ローカル経路ではモデルに HTML を見せない。構造の保存はコード側の不変条件に
+  // なるので、再サンプリング（外部経路の maxAttempts）は要らない。設定が
+  // 揃っていなければ黙って外部経路に落ちる。
+  const localTranslator =
+    serverConfig.translation.provider === "local"
+      ? buildLocalTranslator()
+      : null;
+  if (serverConfig.translation.provider === "local" && !localTranslator) {
+    logger.warn(
+      `[translation][${jobId}] TRANSLATION_PROVIDER=local but no Ollama base URL is configured; falling back to the external provider.`,
+    );
+  }
+  if (localTranslator) {
+    addLogFields<"translationWorker.run">({
+      "translation.model": localTranslator.modelId,
+    });
+  }
+
   let totalTokens = 0;
   let retriedChunks = 0;
   let degradedChunks = 0;
+  let localSegments = 0;
+  let localUntranslated = 0;
   for (const chunk of chunks.slice(doneChunks)) {
-    const prompt = constructTranslationPrompt(targetLang, chunk);
+    let chunkText: string;
 
-    // The endpoint is unreliable per call, not per prompt: on some chunks it
-    // echoes the input, prepends "以下が…翻訳したものです。", or rewrites code.
-    // Sampling again clears it, so keep the cleanest attempt.
-    let best: { text: string; problems: string[] } | null = null;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      const result = await inferenceClient.inferFromText(prompt, {
-        schema: null,
-        abortSignal: job.abortSignal,
-      });
-      totalTokens += result.totalTokens ?? 0;
-      if (!result.response) {
-        throw new Error(
-          `[translation][${jobId}] Empty translation response for "${bookmarkId}".`,
-        );
-      }
-      const text = restoreCodeContent(
+    if (localTranslator) {
+      const { html: out, stats } = await translateChunkLocally(
+        localTranslator,
         chunk,
-        stripPreamble(chunk, stripCodeFence(result.response)),
+        targetLang,
+        { jobId },
       );
-      const problems = findChunkProblems(chunk, text, targetIsJapanese);
-      if (!best || problems.length < best.problems.length) {
-        best = { text, problems };
-      }
-      if (problems.length === 0) {
-        break;
-      }
-      if (attempt < maxAttempts) {
-        retriedChunks += 1;
-        logger.info(
-          `[translation][${jobId}] Chunk ${doneChunks + 1}/${chunks.length} of "${bookmarkId}" ${problems.join("; ")}; retrying (attempt ${attempt + 1}/${maxAttempts}).`,
+      localSegments += stats.segments;
+      localUntranslated += stats.failed + stats.degraded;
+      chunkText = out;
+      if (stats.failed + stats.degraded > 0) {
+        degradedChunks += 1;
+        logger.warn(
+          `[translation][${jobId}] Chunk ${doneChunks + 1}/${chunks.length} of "${bookmarkId}": ${stats.failed + stats.degraded}/${stats.segments} blocks kept untranslated (${stats.degraded} because the inline tags could not be restored).`,
         );
       }
-    }
-    if (best!.problems.length > 0) {
-      degradedChunks += 1;
-      logger.warn(
-        `[translation][${jobId}] Chunk ${doneChunks + 1}/${chunks.length} of "${bookmarkId}" kept with problems after ${maxAttempts} attempts: ${best!.problems.join("; ")}.`,
-      );
+    } else {
+      const prompt = constructTranslationPrompt(targetLang, chunk);
+
+      // The endpoint is unreliable per call, not per prompt: on some chunks it
+      // echoes the input, prepends "以下が…翻訳したものです。", or rewrites code.
+      // Sampling again clears it, so keep the cleanest attempt.
+      let best: { text: string; problems: string[] } | null = null;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const result = await inferenceClient.inferFromText(prompt, {
+          schema: null,
+          abortSignal: job.abortSignal,
+        });
+        totalTokens += result.totalTokens ?? 0;
+        if (!result.response) {
+          throw new Error(
+            `[translation][${jobId}] Empty translation response for "${bookmarkId}".`,
+          );
+        }
+        const text = restoreCodeContent(
+          chunk,
+          stripPreamble(chunk, stripCodeFence(result.response)),
+        );
+        const problems = findChunkProblems(chunk, text, targetIsJapanese);
+        if (!best || problems.length < best.problems.length) {
+          best = { text, problems };
+        }
+        if (problems.length === 0) {
+          break;
+        }
+        if (attempt < maxAttempts) {
+          retriedChunks += 1;
+          logger.info(
+            `[translation][${jobId}] Chunk ${doneChunks + 1}/${chunks.length} of "${bookmarkId}" ${problems.join("; ")}; retrying (attempt ${attempt + 1}/${maxAttempts}).`,
+          );
+        }
+      }
+      if (best!.problems.length > 0) {
+        degradedChunks += 1;
+        logger.warn(
+          `[translation][${jobId}] Chunk ${doneChunks + 1}/${chunks.length} of "${bookmarkId}" kept with problems after ${maxAttempts} attempts: ${best!.problems.join("; ")}.`,
+        );
+      }
+      chunkText = best!.text;
     }
 
-    translated.push(best!.text);
+    translated.push(chunkText);
     doneChunks += 1;
     sourceOffset += chunk.length;
 
@@ -396,6 +438,12 @@ export async function runTranslation(
     "translation.total_tokens": totalTokens,
     "translation.retried_chunks": retriedChunks,
     "translation.degraded_chunks": degradedChunks,
+    ...(localTranslator
+      ? {
+          "translation.text_nodes": localSegments,
+          "translation.text_nodes_failed": localUntranslated,
+        }
+      : {}),
   });
 
   await db
@@ -404,6 +452,10 @@ export async function runTranslation(
     .where(eq(bookmarks.id, bookmarkId));
 
   logger.info(
-    `[translation][${jobId}] Translated "${bookmarkId}" (${chunks.length} chunks, ${totalTokens} tokens, ${retriedChunks} retries, ${degradedChunks} kept with problems).`,
+    `[translation][${jobId}] Translated "${bookmarkId}" (${chunks.length} chunks, ` +
+      (localTranslator
+        ? `${localSegments} blocks, ${localUntranslated} untranslated`
+        : `${totalTokens} tokens, ${retriedChunks} retries`) +
+      `, ${degradedChunks} chunks kept with problems).`,
   );
 }

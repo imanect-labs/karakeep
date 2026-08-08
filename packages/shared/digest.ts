@@ -5,12 +5,11 @@
  * プロンプトと推論クライアントだけを置く。`embedding.ts` と同じ理由で、
  * `ollama` パッケージへの依存をこのパッケージに閉じ込めたい。
  */
-import { Ollama } from "ollama";
 import { z } from "zod";
 
 import serverConfig from "./config";
-import { customFetch } from "./customFetch";
 import { InferenceClientFactory } from "./inference";
+import { buildLocalChatClient } from "./localChat";
 
 /**
  * ベンチで 14/14 成功した版そのまま。4 行目と 5 行目は実測の失敗に対する
@@ -88,42 +87,6 @@ export interface DigestClient {
   complete(system: string, user: string): Promise<string>;
 }
 
-class OllamaDigestClient implements DigestClient {
-  readonly modelId: string;
-  private ollama: Ollama;
-
-  constructor(
-    baseUrl: string,
-    private readonly model: string,
-  ) {
-    this.modelId = `ollama/${model}`;
-    this.ollama = new Ollama({ host: baseUrl, fetch: customFetch });
-  }
-
-  async complete(system: string, user: string): Promise<string> {
-    const response = await this.ollama.chat({
-      model: this.model,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-      format: "json",
-      // **これが無いと動かない。** qwen3.5 系はハイブリッド推論モデルで、
-      // 既定では reasoning が num_predict を食い潰し、JSON が 1 件も
-      // 出力されない（実測 14/14 パース失敗 → think:false で 0/14）。
-      think: false,
-      stream: false,
-      options: {
-        temperature: 0.2,
-        // GTX 1650（VRAM 4GB）では 4096 にすると ollama が OOM で落ちた。
-        num_ctx: 2048,
-        num_predict: 300,
-      },
-    });
-    return response.message.content;
-  }
-}
-
 export function buildDigestClient(): DigestClient | null {
   const cfg = serverConfig.recommender.digest;
 
@@ -134,18 +97,15 @@ export function buildDigestClient(): DigestClient | null {
   if (cfg.provider === "local") {
     // 埋め込みと同じ Ollama を使う。埋め込みは 04:00、ダイジェストは
     // rank（05:30）の後なので、OLLAMA_MAX_LOADED_MODELS=1 でも競合しない。
-    //
-    // EMBEDDING_BASE_URL を流用できるのは EMBEDDING_PROVIDER=ollama の
-    // ときだけ。openai 互換で使っている場合その URL は `/v1` 付きで、
-    // Ollama のネイティブ `/api/chat` には当たらない。
-    const baseUrl =
-      (serverConfig.embedding.provider === "ollama"
-        ? serverConfig.embedding.baseUrl
-        : undefined) ?? serverConfig.inference.ollamaBaseUrl;
-    if (!baseUrl) {
+    const local = buildLocalChatClient(cfg.model);
+    if (!local) {
       return null;
     }
-    return new OllamaDigestClient(baseUrl, cfg.model);
+    return {
+      modelId: local.modelId,
+      complete: (system, user) =>
+        local.chat(system, user, { json: true, numPredict: 300 }),
+    };
   }
 
   const inference = InferenceClientFactory.build();
