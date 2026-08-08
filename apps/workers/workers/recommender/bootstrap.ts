@@ -1,3 +1,4 @@
+import { createId } from "@paralleldrive/cuid2";
 import { and, desc, eq, inArray } from "drizzle-orm";
 
 import { db } from "@karakeep/db";
@@ -7,10 +8,15 @@ import {
   highlights,
   recCandidates,
   recDomains,
+  recFeedbackEvents,
   recImpressions,
   userReadingProgress,
 } from "@karakeep/db/schema";
-import { normalizeTitleHash, normalizeUrl } from "@karakeep/recommender";
+import {
+  DEFAULT_REWARD_WEIGHTS,
+  normalizeTitleHash,
+  normalizeUrl,
+} from "@karakeep/recommender";
 import { RecommenderEmbedQueue } from "@karakeep/shared-server";
 import logger from "@karakeep/shared/logger";
 
@@ -128,10 +134,14 @@ export async function runBootstrap(
     imported += inserted.length;
   }
 
+  const savedAtByBookmark = new Map(
+    rows.map((row) => [row.bookmarkId, row.createdAt]),
+  );
   const positives = await writeBootstrapImpressions(
     userId,
     importedByBookmark,
     positiveIds,
+    savedAtByBookmark,
     now,
   );
 
@@ -145,12 +155,19 @@ export async function runBootstrap(
   return { scanned: rows.length, imported, positives };
 }
 
-/** お気に入り・ハイライトあり・読了 60% 以上を正例とみなす。 */
+/**
+ * お気に入り・ハイライトあり・読了 60% 以上を「強い」正例とみなす。
+ *
+ * 種別まで返すのは、そのままイベント種別としてフィードバックに書くため。
+ * 実際は読了なのに `favourited` として記録すると、報酬の重みが変わってしまう。
+ */
+type StrongPositive = "favourited" | "highlighted" | "read_full";
+
 async function loadPositiveBookmarkIds(
   userId: string,
   bookmarkIds: string[],
-): Promise<Set<string>> {
-  const positives = new Set<string>();
+): Promise<Map<string, StrongPositive>> {
+  const positives = new Map<string, StrongPositive>();
   for (const batch of chunk(bookmarkIds, IN_CLAUSE_CHUNK)) {
     const favourited = await db
       .select({ id: bookmarks.id })
@@ -163,7 +180,7 @@ async function loadPositiveBookmarkIds(
         ),
       );
     for (const row of favourited) {
-      positives.add(row.id);
+      positives.set(row.id, "favourited");
     }
 
     const highlighted = await db
@@ -176,7 +193,7 @@ async function loadPositiveBookmarkIds(
         ),
       );
     for (const row of highlighted) {
-      positives.add(row.id);
+      positives.set(row.id, "highlighted");
     }
 
     const read = await db
@@ -193,7 +210,7 @@ async function loadPositiveBookmarkIds(
       );
     for (const row of read) {
       if ((row.percent ?? 0) >= 60) {
-        positives.add(row.id);
+        positives.set(row.id, "read_full");
       }
     }
   }
@@ -206,30 +223,88 @@ async function loadPositiveBookmarkIds(
  * `briefingId` は null、`shown` と `examined` は false のまま。提示されて
  * いないので、指標の分母にもペア生成にも入らない。**プロフィール構築専用**。
  */
+/**
+ * 取り込んだブックマークを、プロフィールの材料になる形で記録する。
+ *
+ * **`recFeedbackEvents` まで書くのが要点。** プロフィールの重心は
+ * `recFeedbackEvents` を起点に組み立てられる (`profiles.ts` の `loadSamples`)
+ * ので、impression だけ作ってもライブラリは一切プロフィールに入らない。
+ * ここを書き漏らすとコールドスタート解消という機能の主目的が成立しない。
+ *
+ * そして**ブックマークしたこと自体を正例として扱う**。ユーザが意図的に
+ * 保存した行為であり、報酬の重みでも `saved` は 1.2 と全イベント中で最大。
+ * お気に入り・ハイライト・読了だけを正例にすると、それらの機能を使わない
+ * ユーザではプロフィールが空のままになる (実際に 95 件中 3 件しか拾えず、
+ * stable/recent/negative がすべて null になっていた)。
+ *
+ * `occurredAt` はブックマークの作成時刻を使う。`now` にすると全件が同時刻の
+ * 扱いになり、recent プロフィールの半減期 (7 日) が意味を失う。
+ */
 async function writeBootstrapImpressions(
   userId: string,
   importedByBookmark: Map<string, string>,
-  positiveIds: Set<string>,
+  positiveIds: Map<string, StrongPositive>,
+  savedAtByBookmark: Map<string, Date>,
   now: Date,
 ): Promise<number> {
-  const rows = [...importedByBookmark.entries()]
-    .filter(([bookmarkId]) => positiveIds.has(bookmarkId))
-    .map(([, candidateId]) => ({
+  const impressions = [...importedByBookmark.entries()].map(
+    ([bookmarkId, candidateId]) => ({
+      id: createId(),
       userId,
       briefingId: null,
       candidateId,
+      bookmarkId,
       source: "bootstrap" as const,
       shown: false,
       examined: false,
       rewardFinalized: true,
-      rewardValue: 1,
-      createdAt: now,
-    }));
+      // 保存済み = saved 相当。強い正例はさらに上乗せする。
+      rewardValue: positiveIds.has(bookmarkId)
+        ? DEFAULT_REWARD_WEIGHTS.saved +
+          DEFAULT_REWARD_WEIGHTS[positiveIds.get(bookmarkId)!]
+        : DEFAULT_REWARD_WEIGHTS.saved,
+      createdAt: savedAtByBookmark.get(bookmarkId) ?? now,
+    }),
+  );
 
-  for (const batch of chunk(rows)) {
-    await db.insert(recImpressions).values(batch).onConflictDoNothing();
+  const events = impressions.flatMap((impression) => {
+    const occurredAt =
+      savedAtByBookmark.get(impression.bookmarkId) ?? impression.createdAt;
+    const rows: {
+      impressionId: string;
+      userId: string;
+      eventType: "saved" | StrongPositive;
+      occurredAt: Date;
+    }[] = [
+      {
+        impressionId: impression.id,
+        userId,
+        eventType: "saved",
+        occurredAt,
+      },
+    ];
+    const strong = positiveIds.get(impression.bookmarkId);
+    if (strong) {
+      rows.push({
+        impressionId: impression.id,
+        userId,
+        eventType: strong,
+        occurredAt,
+      });
+    }
+    return rows;
+  });
+
+  for (const batch of chunk(impressions)) {
+    await db
+      .insert(recImpressions)
+      .values(batch.map(({ bookmarkId: _bookmarkId, ...rest }) => rest))
+      .onConflictDoNothing();
   }
-  return rows.length;
+  for (const batch of chunk(events)) {
+    await db.insert(recFeedbackEvents).values(batch).onConflictDoNothing();
+  }
+  return impressions.length;
 }
 
 async function ensureDomains(
