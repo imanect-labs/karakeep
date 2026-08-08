@@ -1,10 +1,11 @@
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 
 import { db } from "@karakeep/db";
 import {
   recBriefings,
   recCandidates,
   recDomains,
+  recFeedbackEvents,
   recImpressions,
   recSources,
 } from "@karakeep/db/schema";
@@ -203,11 +204,38 @@ async function upsertBriefing(
       ),
     );
   if (existing.length > 0) {
-    // 同じ日に再実行された。impression を作り直すと観測ログが壊れるので、
-    // 既存の impression を消してから作り直す。
+    // 同じ日に再実行された。impression を作り直すので既存を消すが、
+    // **フィードバックが付いているものは残す**。
+    //
+    // `recFeedbackEvents.impressionId` は `onDelete: cascade` なので、
+    // 無条件に消すと**ユーザの操作履歴が道連れで消える**。実際に本番で
+    // rank を流し直した際、その日の viewed / clicked / liked / saved /
+    // dismissed が全部消えた。dismissed が消えると negative プロフィールが
+    // 作れなくなるので、学習にも直接効く。
+    //
+    // 反応済みの impression を残しても実害は無い。下の insert は
+    // 同じ候補を選べば新しい行を作るが、`examined` と報酬の計算は
+    // impression 単位で閉じているため、履歴が二重に効くことはない。
+    const withFeedback = await db
+      .selectDistinct({ id: recFeedbackEvents.impressionId })
+      .from(recFeedbackEvents)
+      .innerJoin(
+        recImpressions,
+        eq(recImpressions.id, recFeedbackEvents.impressionId),
+      )
+      .where(eq(recImpressions.briefingId, existing[0].id));
+    const keep = withFeedback.map((r) => r.id);
+
     await db
       .delete(recImpressions)
-      .where(eq(recImpressions.briefingId, existing[0].id));
+      .where(
+        keep.length > 0
+          ? and(
+              eq(recImpressions.briefingId, existing[0].id),
+              notInArray(recImpressions.id, keep),
+            )
+          : eq(recImpressions.briefingId, existing[0].id),
+      );
     await db
       .update(recBriefings)
       .set({ status: "generating", generatedAt: now })

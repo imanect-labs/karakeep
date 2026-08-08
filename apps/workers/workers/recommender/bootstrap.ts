@@ -134,6 +134,38 @@ export async function runBootstrap(
     imported += inserted.length;
   }
 
+  // 既に候補として入っているブックマークも拾い直す。
+  //
+  // `onConflictDoNothing` の `returning` は**新規に挿入された行しか返さない**。
+  // そのため、候補の取り込みだけ先に済んでいて impression / イベントが無い
+  // ブックマークは、何度 bootstrap を回しても永久に埋まらない。実際、
+  // イベントを書くようにした修正を入れたあとで再実行しても `imported 0` で
+  // 何も起きず、既存の 95 件はプロフィールに入らないままだった。
+  //
+  // 冪等にするため、bookmarkId で候補を引き直して対象に含める。
+  // impression 側は下で存在チェックしてから作る。
+  const knownIds = new Set(importedByBookmark.values());
+  for (const batch of chunk(
+    rows.map((r) => r.bookmarkId),
+    IN_CLAUSE_CHUNK,
+  )) {
+    const existing = await db
+      .select({ id: recCandidates.id, bookmarkId: recCandidates.bookmarkId })
+      .from(recCandidates)
+      .where(
+        and(
+          eq(recCandidates.userId, userId),
+          eq(recCandidates.origin, "bootstrap"),
+          inArray(recCandidates.bookmarkId, batch),
+        ),
+      );
+    for (const row of existing) {
+      if (row.bookmarkId && !knownIds.has(row.id)) {
+        importedByBookmark.set(row.bookmarkId, row.id);
+      }
+    }
+  }
+
   const savedAtByBookmark = new Map(
     rows.map((row) => [row.bookmarkId, row.createdAt]),
   );
@@ -247,8 +279,30 @@ async function writeBootstrapImpressions(
   savedAtByBookmark: Map<string, Date>,
   now: Date,
 ): Promise<number> {
-  const impressions = [...importedByBookmark.entries()].map(
-    ([bookmarkId, candidateId]) => ({
+  // 既に impression がある候補は飛ばす。冪等化で既存候補も対象に含めるように
+  // したので、ここで弾かないと再実行のたびに正例が二重に積み上がる。
+  const already = new Set<string>();
+  for (const batch of chunk(
+    [...importedByBookmark.values()],
+    IN_CLAUSE_CHUNK,
+  )) {
+    const rows = await db
+      .select({ candidateId: recImpressions.candidateId })
+      .from(recImpressions)
+      .where(
+        and(
+          eq(recImpressions.userId, userId),
+          inArray(recImpressions.candidateId, batch),
+        ),
+      );
+    for (const row of rows) {
+      already.add(row.candidateId);
+    }
+  }
+
+  const impressions = [...importedByBookmark.entries()]
+    .filter(([, candidateId]) => !already.has(candidateId))
+    .map(([bookmarkId, candidateId]) => ({
       id: createId(),
       userId,
       briefingId: null,
@@ -264,8 +318,7 @@ async function writeBootstrapImpressions(
           DEFAULT_REWARD_WEIGHTS[positiveIds.get(bookmarkId)!]
         : DEFAULT_REWARD_WEIGHTS.saved,
       createdAt: savedAtByBookmark.get(bookmarkId) ?? now,
-    }),
-  );
+    }));
 
   const events = impressions.flatMap((impression) => {
     const occurredAt =
