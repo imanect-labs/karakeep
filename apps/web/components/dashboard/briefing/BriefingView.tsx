@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Compass, Sparkles } from "lucide-react";
+import { ChevronLeft, ChevronRight, Compass, Sparkles } from "lucide-react";
+
+import { paginate } from "@/lib/pagination";
 
 import { useCreateBookmarkWithPostHook } from "@karakeep/shared-react/hooks/bookmarks";
 import { useTRPC } from "@karakeep/shared-react/trpc";
@@ -14,10 +16,23 @@ import BriefingCard from "./BriefingCard";
 import DiscoveryBlock from "./DiscoveryBlock";
 import InterestPanel from "./InterestPanel";
 
+/**
+ * 1 ページに出す件数。1 日 30 件を一度に並べると縦に長すぎて、どこまで
+ * 読んだか分からなくなる。
+ *
+ * 学習側への影響は無い。`finalizeObservation` は「最深到達ランクまでを
+ * examined とみなす」前置き方式なので、ページを送って読み進めた分だけ
+ * 正しく examined になる。むしろ 30 枚を一気にスクロールで流すより、
+ * 実際に読んだ深さが素直に出る。
+ */
+const PAGE_SIZE = 10;
+
 export default function BriefingView() {
   const api = useTRPC();
   const queryClient = useQueryClient();
   const [date, setDate] = useState<string | undefined>(undefined);
+  const [page, setPage] = useState(0);
+  const listRef = useRef<HTMLDivElement>(null);
 
   const briefing = useQuery(api.recommender.getBriefing.queryOptions({ date }));
   const dates = useQuery(
@@ -79,6 +94,25 @@ export default function BriefingView() {
     [briefing.data],
   );
 
+  // 日付を切り替えたら 1 ページ目に戻す。
+  useEffect(() => {
+    setPage(0);
+  }, [date]);
+
+  const {
+    pageCount,
+    currentPage,
+    pageStart,
+    items: visibleItems,
+  } = paginate(items, PAGE_SIZE, page);
+
+  const goToPage = useCallback((next: number) => {
+    setPage(next);
+    // ページを送ったら先頭へ。送った先の途中から始まると、読み飛ばしたのか
+    // 分からなくなる。ヘッダー分の余白を残したいので block: "start"。
+    listRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+
   const handleSave = useCallback(
     async (item: BriefingItem) => {
       // FR-U-04: 既存のブックマーク作成フローをそのまま呼ぶ。crawl・要約・
@@ -116,7 +150,9 @@ export default function BriefingView() {
           )}
           {items.length > 0 && (
             <span className="shrink-0 text-sm tabular-nums text-muted-foreground">
-              {items.length} 件
+              {pageCount > 1
+                ? `${pageStart + 1}–${pageStart + visibleItems.length} / ${items.length} 件`
+                : `${items.length} 件`}
             </span>
           )}
         </div>
@@ -152,8 +188,11 @@ export default function BriefingView() {
         </div>
       ) : (
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
-          <div className="flex min-w-0 flex-col gap-3">
-            {items.map((item) => (
+          <div
+            ref={listRef}
+            className="flex min-w-0 scroll-mt-4 flex-col gap-3"
+          >
+            {visibleItems.map((item) => (
               <BriefingCard
                 key={item.impressionId}
                 item={item}
@@ -180,6 +219,52 @@ export default function BriefingView() {
                 }
               />
             ))}
+
+            {pageCount > 1 && (
+              <nav
+                aria-label="Briefing のページ"
+                className="flex items-center justify-between gap-2 pt-1"
+              >
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-11 gap-1 sm:h-9"
+                  disabled={currentPage === 0}
+                  onClick={() => goToPage(currentPage - 1)}
+                >
+                  <ChevronLeft className="size-4" />
+                  {/* 幅の狭い端末ではラベルを短くする。番号ボタンと並ぶと 375px に収まらない。 */}
+                  <span className="hidden sm:inline">前の {PAGE_SIZE} 件</span>
+                  <span className="sm:hidden">前へ</span>
+                </Button>
+                {/* ページ数は 3 個程度なので番号を全部出す。 */}
+                <div className="flex gap-1">
+                  {Array.from({ length: pageCount }, (_, i) => (
+                    <Button
+                      key={i}
+                      size="sm"
+                      variant={i === currentPage ? "default" : "ghost"}
+                      aria-current={i === currentPage ? "page" : undefined}
+                      className="h-11 w-11 p-0 tabular-nums sm:h-9 sm:w-9"
+                      onClick={() => goToPage(i)}
+                    >
+                      {i + 1}
+                    </Button>
+                  ))}
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-11 gap-1 sm:h-9"
+                  disabled={currentPage === pageCount - 1}
+                  onClick={() => goToPage(currentPage + 1)}
+                >
+                  <span className="hidden sm:inline">次の {PAGE_SIZE} 件</span>
+                  <span className="sm:hidden">次へ</span>
+                  <ChevronRight className="size-4" />
+                </Button>
+              </nav>
+            )}
           </div>
 
           {/*
