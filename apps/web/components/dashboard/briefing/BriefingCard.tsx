@@ -108,18 +108,23 @@ export default function BriefingCard({
       )}
     >
       <div className="flex items-start justify-between gap-3">
-        <div className="flex flex-col gap-1">
+        {/*
+          min-w-0 が無いと flex の子は既定で内容幅より縮まないので、長い
+          タイトルや (title が null のときの) URL が画面外へはみ出す。
+          スマホで「見づらい」の最大の原因はこれ。break-words と対で要る。
+        */}
+        <div className="flex min-w-0 flex-col gap-1">
           <a
             href={item.url}
             target="_blank"
             rel="noopener noreferrer"
             onClick={onOpen}
-            className="text-lg font-medium hover:underline"
+            className="break-words text-lg font-medium hover:underline"
           >
             {item.title ?? item.url}
           </a>
-          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            {item.domain && <span>{item.domain}</span>}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground sm:text-xs">
+            {item.domain && <span className="break-all">{item.domain}</span>}
             {item.publishedAt && (
               <span>{new Date(item.publishedAt).toLocaleDateString()}</span>
             )}
@@ -142,23 +147,27 @@ export default function BriefingCard({
       </div>
 
       {item.summary && (
-        <p className="line-clamp-3 text-sm text-muted-foreground">
+        <p className="line-clamp-3 break-words text-[0.9375rem] text-muted-foreground sm:text-sm">
           {item.summary}
         </p>
       )}
 
-      <p className="text-xs italic text-muted-foreground">
+      <p className="break-words text-sm italic text-muted-foreground sm:text-xs">
         {item.reason}
         {armLabel && `（${armLabel}）`}
       </p>
 
-      <div className="flex flex-wrap gap-2">
+      {/*
+        スマホでは 4 つのボタンが中途半端に折り返して押しにくいので 2 列に
+        並べ、タップ領域を 44px 確保する (sm の h-9 = 36px は指には小さい)。
+      */}
+      <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
         <Button
           variant="outline"
           size="sm"
           asChild
           onClick={onOpen}
-          className="gap-1"
+          className="h-11 gap-1 sm:h-9"
         >
           <a href={item.url} target="_blank" rel="noopener noreferrer">
             <ExternalLink className="size-4" />
@@ -170,7 +179,7 @@ export default function BriefingCard({
           size="sm"
           disabled={busy || saved}
           onClick={onSave}
-          className="gap-1"
+          className="h-11 gap-1 sm:h-9"
         >
           <Bookmark className="size-4" />
           {saved ? "保存済み" : "保存"}
@@ -180,7 +189,7 @@ export default function BriefingCard({
           size="sm"
           disabled={busy}
           onClick={onLike}
-          className="gap-1"
+          className="h-11 gap-1 sm:h-9"
         >
           <Heart className="size-4" />
           いいね
@@ -194,7 +203,7 @@ export default function BriefingCard({
           size="sm"
           disabled={busy || dismissed}
           onClick={onDismiss}
-          className="gap-1 text-muted-foreground"
+          className="h-11 gap-1 text-muted-foreground sm:h-9"
         >
           <XIcon className="size-4" />
           {dismissed ? "興味なしにした" : "興味なし"}

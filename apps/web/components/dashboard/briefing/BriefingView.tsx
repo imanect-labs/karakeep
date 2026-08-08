@@ -105,22 +105,29 @@ export default function BriefingView() {
 
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <Sparkles className="size-5" />
-          <h1 className="text-2xl">今日の Briefing</h1>
+      <header className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-center gap-2">
+          <Sparkles className="size-5 shrink-0" />
+          <h1 className="text-xl sm:text-2xl">今日の Briefing</h1>
           {data?.briefingDate && (
-            <span className="text-sm text-muted-foreground">
+            <span className="shrink-0 text-sm text-muted-foreground">
               {data.briefingDate}
             </span>
           )}
+          {items.length > 0 && (
+            <span className="shrink-0 text-sm tabular-nums text-muted-foreground">
+              {items.length} 件
+            </span>
+          )}
         </div>
+        {/* 日付が 14 個並ぶと折り返して縦に伸びるので、スマホでは横スクロール。 */}
         {(dates.data?.length ?? 0) > 1 && (
-          <div className="flex flex-wrap gap-1">
+          <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-1 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
             {dates.data?.map((d) => (
               <Button
                 key={d.briefingDate}
                 size="sm"
+                className="h-9 shrink-0"
                 variant={
                   d.briefingDate === data?.briefingDate ? "default" : "ghost"
                 }
@@ -145,7 +152,7 @@ export default function BriefingView() {
         </div>
       ) : (
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
-          <div className="flex flex-col gap-3">
+          <div className="flex min-w-0 flex-col gap-3">
             {items.map((item) => (
               <BriefingCard
                 key={item.impressionId}
@@ -175,9 +182,25 @@ export default function BriefingView() {
             ))}
           </div>
 
-          <aside className="flex flex-col gap-4">
-            <DiscoveryBlock />
-            <InterestPanel />
+          {/*
+            件数を増やすとサイドバーがカードの遥か下に埋もれる。スマホでは
+            折りたたみにして先頭に出し、開いたときだけ場所を取るようにする。
+            lg 以上は今までどおり右の常設カラム。
+          */}
+          <aside className="order-first lg:order-none">
+            <details className="rounded-md border bg-background lg:hidden">
+              <summary className="cursor-pointer list-none p-3 text-sm font-medium">
+                発見と興味の現在地
+              </summary>
+              <div className="flex flex-col gap-4 border-t p-3">
+                <DiscoveryBlock />
+                <InterestPanel />
+              </div>
+            </details>
+            <div className="hidden flex-col gap-4 lg:flex">
+              <DiscoveryBlock />
+              <InterestPanel />
+            </div>
           </aside>
         </div>
       )}
