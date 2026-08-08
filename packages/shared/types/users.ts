@@ -200,6 +200,7 @@ export const zUserSettingsSchema = z.object({
   bookmarkClickAction: z.enum([
     "open_original_link",
     "expand_bookmark_preview",
+    "open_reader_view",
   ]),
   archiveDisplayBehaviour: z.enum(["show", "hide"]),
   timezone: z.string(),

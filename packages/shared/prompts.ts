@@ -91,6 +91,27 @@ You must respond in JSON with the key "tags" and the value is an array of string
 }
 
 /**
+ * Construct a structure-preserving HTML translation prompt (imanect-labs fork).
+ * The chunk may be a partial HTML fragment; tags must be preserved verbatim so
+ * that concatenating the translated chunks reproduces the original structure.
+ */
+export function constructTranslationPrompt(
+  targetLang: string,
+  htmlChunk: string,
+): string {
+  return `You are a professional translator. Translate the visible text of the following HTML fragment into ${targetLang}.
+You MUST follow these rules strictly:
+- Preserve the HTML structure EXACTLY: do not add, remove, reorder, open, or close any tags or attributes.
+- The fragment may be a partial piece of a larger document and may contain unbalanced or unclosed tags. Leave them exactly as they are.
+- Translate ONLY human-readable text nodes. Do NOT translate tag names, attribute names or values, URLs, or the contents of <code>, <pre>, <kbd>, <script>, or <style> elements.
+- Do NOT wrap the output in markdown code fences and do NOT add any explanation.
+- Respond with ONLY the translated HTML fragment.
+
+HTML fragment:
+${htmlChunk}`;
+}
+
+/**
  * Construct summary prompt
  */
 export function constructSummaryPrompt(

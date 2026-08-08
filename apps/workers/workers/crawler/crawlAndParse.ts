@@ -51,6 +51,7 @@ import {
 import { crawlPage } from "./crawlPage";
 import { runParseSubprocess } from "./parseSubprocess";
 import { redactUrlCredentials, shouldRetryCrawlStatusCode } from "./utils";
+import { fetchXPostContent } from "./x";
 
 const tracer = getTracer("@karakeep/workers");
 
@@ -300,6 +301,24 @@ export async function crawlAndParseUrl(
       }
       const meta = resolveMetadata(renderMeta, probeMetadata, renderBlocked);
 
+      // X serves one set of Open Graph tags per account rather than per post, so
+      // whatever the crawl found is the account name and its avatar. Replace it
+      // with the actual post. Returns null for non-X URLs and on any failure, in
+      // which case the crawled metadata stands.
+      const xPost = await fetchXPostContent(url, `[Crawler][${jobId}]`, logger);
+      let readableContentOverride: { content: string } | null = null;
+      if (xPost) {
+        meta.title = xPost.title;
+        meta.description = xPost.description;
+        meta.image = xPost.image;
+        meta.author = xPost.author;
+        meta.publisher = xPost.publisher;
+        meta.datePublished = xPost.datePublished;
+        if (xPost.html) {
+          readableContentOverride = { content: xPost.html };
+        }
+      }
+
       const parseDate = (date: string | null | undefined) => {
         if (!date) {
           return null;
@@ -330,7 +349,9 @@ export async function crawlAndParseUrl(
         })
         .where(eq(bookmarkLinks.id, bookmarkId));
 
-      let readableContent = parsedReadableContent;
+      // X's rendered page yields almost nothing readable (and nothing at all for
+      // an article, whose post text is just a link), so prefer the rebuilt post.
+      let readableContent = readableContentOverride ?? parsedReadableContent;
 
       const screenshotAssetInfo = await raceWith(
         storeScreenshot(screenshot, userId, jobId),

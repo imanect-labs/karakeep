@@ -10,6 +10,8 @@ export const API_KEY_SCOPE_RESOURCES = [
   "highlights",
   "lists",
   "prompts",
+  // imanect-labs fork: briefing recommender.
+  "recommender",
   "rules",
   "tags",
   "users",

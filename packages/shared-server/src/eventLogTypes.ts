@@ -37,6 +37,21 @@ type EventLogInternal =
       "inference.tagging.num_potential_relevant_tags"?: number;
     }
   | {
+      ["event.name"]: "translationWorker.run";
+      "bookmark.id": string;
+      "bookmark.url"?: string;
+      "bookmark.domain"?: string;
+      "translation.target_lang"?: string;
+      "translation.model"?: string;
+      "translation.num_chunks"?: number;
+      "translation.total_tokens"?: number;
+      "translation.skipped"?: boolean;
+      // Chunks that needed another call because the output failed validation,
+      // and chunks kept despite still failing it after the last attempt.
+      "translation.retried_chunks"?: number;
+      "translation.degraded_chunks"?: number;
+    }
+  | {
       ["event.name"]: "bookmark.summarize";
       "bookmark.id"?: string;
       "inference.model"?: string;
@@ -96,6 +111,25 @@ type EventLogInternal =
       "embedding.text_size"?: number;
       "embedding.prompt_tokens"?: number;
       "embedding.total_tokens"?: number;
+    }
+  | {
+      // Briefing recommender (imanect-labs fork).
+      ["event.name"]: "recommenderWorker.run";
+      "recommender.task"?: string;
+      "user.id"?: string;
+      "recommender.sources_tried"?: number;
+      "recommender.sources_failed"?: number;
+      "recommender.fetched"?: number;
+      "recommender.inserted"?: number;
+      "recommender.new_domains"?: number;
+    }
+  | {
+      ["event.name"]: "recommenderEmbedWorker.run";
+      "user.id"?: string;
+      "recommender.embedded"?: number;
+      "recommender.embed_failed"?: number;
+      "recommender.duplicates"?: number;
+      "recommender.clusters"?: number;
     }
   | {
       ["event.name"]: "backupWorker.run";

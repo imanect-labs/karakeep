@@ -43,7 +43,8 @@
     },
     "quota": "Quota",
     "bookmarks": "Bookmarks",
-    "storage": "Storage"
+    "storage": "Storage",
+    "briefing": "Briefing"
   },
   "layouts": {
     "masonry": "Masonry",
@@ -149,7 +150,8 @@
         "bookmark_click_action": {
           "title": "Bookmark Click Action",
           "open_external_url": "Open Original URL",
-          "open_bookmark_details": "Open Bookmark Details"
+          "open_bookmark_details": "Open Bookmark Details",
+          "open_reader_view": "Open Reader View"
         },
         "archive_display_behaviour": {
           "title": "Archived Bookmarks",
@@ -373,6 +375,10 @@
           "prompts": {
             "label": "Prompts",
             "description": "Manage saved AI prompt configuration."
+          },
+          "recommender": {
+            "label": "Recommender",
+            "description": "Access the briefing recommender"
           },
           "rules": {
             "label": "Rules",
@@ -969,6 +975,10 @@
     "view_original": "View Original",
     "cached_content": "Cached Content",
     "reader_view": "Reader View",
+    "show_original": "Original",
+    "show_translation": "日本語",
+    "translating": "Translating…",
+    "translating_progress": "Translating… {{done}}/{{total}}",
     "archive_info": "Archives may not render correctly inline if they require Javascript. For best results, <1>download it and open in your browser</1>.",
     "fetch_error_title": "Content Unavailable",
     "fetch_error_description": "We couldn't fetch the content for this link. The page may be protected, require authentication, or be temporarily unavailable.",

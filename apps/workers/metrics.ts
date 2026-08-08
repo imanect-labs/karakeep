@@ -30,6 +30,41 @@ export const bookmarkCrawlLatencyHistogram = new Histogram({
   ],
 });
 
+// Briefing recommender (imanect-labs fork).
+export const recommenderCandidatesCounter = new Counter({
+  name: "karakeep_recommender_candidates_total",
+  help: "Candidates entering the recommender pool, by outcome",
+  labelNames: ["outcome"],
+});
+
+export const recommenderSourceFailuresCounter = new Counter({
+  name: "karakeep_recommender_source_failures_total",
+  help: "Source fetches that failed during collection",
+});
+
+export const recommenderBriefingsCounter = new Counter({
+  name: "karakeep_recommender_briefings_total",
+  help: "Briefings generated, by model version",
+  labelNames: ["model_version"],
+});
+
+export const recommenderDomainsCounter = new Counter({
+  name: "karakeep_recommender_domains_total",
+  help: "Domain lifecycle transitions in the recommender",
+  labelNames: ["transition"],
+});
+
+export const recommenderEmbeddingsCounter = new Counter({
+  name: "karakeep_recommender_embeddings_total",
+  help: "Candidate embeddings generated, by outcome",
+  labelNames: ["outcome"],
+});
+
 registry.registerMetric(workerStatsCounter);
+registry.registerMetric(recommenderCandidatesCounter);
+registry.registerMetric(recommenderSourceFailuresCounter);
+registry.registerMetric(recommenderBriefingsCounter);
+registry.registerMetric(recommenderDomainsCounter);
+registry.registerMetric(recommenderEmbeddingsCounter);
 registry.registerMetric(crawlerStatusCodeCounter);
 registry.registerMetric(bookmarkCrawlLatencyHistogram);

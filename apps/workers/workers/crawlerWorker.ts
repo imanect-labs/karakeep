@@ -17,6 +17,7 @@ import {
   EmbeddingsQueue,
   getTracer,
   OpenAIQueue,
+  TranslationQueue,
   triggerSearchReindex,
   VideoWorkerQueue,
   withSpan,
@@ -302,6 +303,19 @@ async function enqueuePostCrawlJobs(
       },
       enqueueOpts,
     );
+
+    // Structure-preserving HTML translation (imanect-labs fork).
+    if (serverConfig.translation.enableAuto) {
+      await db
+        .update(bookmarkLinks)
+        // The previous run's chunk counters are deliberately left in place: the
+        // translation worker uses them to recognise that this exact content is
+        // already translated and skip the job. A crawl retry re-enqueues here,
+        // so without that check the same article is paid for twice.
+        .set({ translationStatus: "pending" })
+        .where(eq(bookmarkLinks.id, bookmarkId));
+      await TranslationQueue.enqueue({ bookmarkId }, enqueueOpts);
+    }
   }
 
   // Update the search index
