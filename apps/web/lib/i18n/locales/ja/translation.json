@@ -250,7 +250,8 @@
         "bookmark_click_action": {
           "title": "ブックマーククリック時の動作",
           "open_external_url": "元のURLを開く",
-          "open_bookmark_details": "ブックマークの詳細を開く"
+          "open_bookmark_details": "ブックマークの詳細を開く",
+          "open_reader_view": "リーダービューを開く"
         },
         "archive_display_behaviour": {
           "show": "タグとリストにアーカイブされたブックマークを表示する",
@@ -407,6 +408,10 @@
           "prompts": {
             "label": "プロンプト",
             "description": "保存されたAIプロンプト設定を管理します。"
+          },
+          "recommender": {
+            "label": "レコメンダー",
+            "description": "Briefing レコメンダーへのアクセス"
           },
           "rules": {
             "label": "ルール",
@@ -784,7 +789,8 @@
     "pdf": "アーカイブ済みPDF",
     "default": "既定",
     "id": "ID",
-    "last_used": "最後に使用"
+    "last_used": "最後に使用",
+    "briefing": "Briefing"
   },
   "layouts": {
     "grid": "グリッド",
@@ -977,6 +983,10 @@
   },
   "preview": {
     "cached_content": "キャッシュされたコンテンツ",
+    "show_original": "原文",
+    "show_translation": "日本語",
+    "translating": "翻訳中…",
+    "translating_progress": "翻訳中… {{done}}/{{total}}",
     "view_original": "オリジナルを見る",
     "reader_view": "リーダー表示",
     "tabs": {

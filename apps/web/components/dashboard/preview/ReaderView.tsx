@@ -1,8 +1,10 @@
+import { useState } from "react";
 import { FullPageSpinner } from "@/components/ui/full-page-spinner";
 import { toast } from "@/components/ui/sonner";
+import { cn } from "@/lib/utils";
 import { useTranslation } from "@/lib/i18n/client";
 import { useQuery } from "@tanstack/react-query";
-import { FileX } from "lucide-react";
+import { FileX, Languages } from "lucide-react";
 
 import BookmarkHTMLHighlighter from "@karakeep/shared-react/components/BookmarkHtmlHighlighter";
 import ScrollProgressTracker from "@karakeep/shared-react/components/ScrollProgressTracker";
@@ -37,7 +39,7 @@ export default function ReaderView({
       bookmarkId,
     }),
   );
-  const { data: cachedContent, isPending: isCachedContentLoading } = useQuery(
+  const { data: linkContent, isPending: isCachedContentLoading } = useQuery(
     api.bookmarks.getBookmark.queryOptions(
       {
         bookmarkId,
@@ -46,11 +48,68 @@ export default function ReaderView({
       {
         select: (data) =>
           data.content.type == BookmarkTypes.LINK
-            ? data.content.htmlContent
+            ? {
+                htmlContent: data.content.htmlContent ?? null,
+                translatedContent: data.content.translatedContent ?? null,
+                translationStatus: data.content.translationStatus ?? null,
+                translationTotalChunks:
+                  data.content.translationTotalChunks ?? null,
+                translationDoneChunks:
+                  data.content.translationDoneChunks ?? null,
+                translationSourceOffset:
+                  data.content.translationSourceOffset ?? null,
+              }
             : null,
+        // Keep polling while a translation is still being generated. The worker
+        // persists after every chunk, so each poll picks up more of the article.
+        refetchInterval: (query) => {
+          const d = query.state.data;
+          return d?.content.type === BookmarkTypes.LINK &&
+            d.content.translationStatus === "pending"
+            ? 2000
+            : false;
+        },
       },
     ),
   );
+
+  // null = the user hasn't picked a side yet, so follow the default below.
+  const [showTranslationOverride, setShowTranslationOverride] = useState<
+    boolean | null
+  >(null);
+  const isTranslating = linkContent?.translationStatus === "pending";
+  // Partial output counts: the reader renders whatever chunks are done so far.
+  const hasTranslation = !!linkContent?.translatedContent;
+  // Default to the translation whenever there is one. Falling back to the
+  // original when a run fails would yank a half-read Japanese article back to
+  // English, which is worse than showing what did get translated.
+  const showTranslation = showTranslationOverride ?? hasTranslation;
+  // While the translation is incomplete, show the translated prefix followed by
+  // the source HTML the worker hasn't reached yet, so the article stays whole
+  // and flips to the target language section by section as chunks land. A run
+  // that failed part-way keeps the same treatment rather than truncating.
+  const isIncomplete =
+    isTranslating || linkContent?.translationStatus === "failure";
+  const partialWithRemainder = () => {
+    const translated = linkContent?.translatedContent ?? "";
+    const offset = linkContent?.translationSourceOffset;
+    const source = linkContent?.htmlContent ?? "";
+    if (!isIncomplete || offset == null || offset >= source.length) {
+      return translated;
+    }
+    return translated + source.slice(offset);
+  };
+  const displayContent =
+    showTranslation && hasTranslation
+      ? partialWithRemainder()
+      : (linkContent?.htmlContent ?? null);
+
+  const totalChunks = linkContent?.translationTotalChunks ?? null;
+  const doneChunks = linkContent?.translationDoneChunks ?? null;
+  const translationPercent =
+    totalChunks && totalChunks > 0 && doneChunks !== null
+      ? Math.min(100, Math.round((doneChunks / totalChunks) * 100))
+      : null;
 
   const {
     showBanner,
@@ -108,10 +167,66 @@ export default function ReaderView({
     },
   });
 
+  const translationProgress = isTranslating ? (
+    <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+      <Languages className="h-3.5 w-3.5 animate-pulse" />
+      {translationPercent !== null
+        ? t("preview.translating_progress", {
+            defaultValue: "Translating… {{done}}/{{total}}",
+            done: doneChunks,
+            total: totalChunks,
+          })
+        : t("preview.translating", "Translating…")}
+      {translationPercent !== null && (
+        <span className="h-1 w-16 overflow-hidden rounded-full bg-muted">
+          <span
+            className="block h-full rounded-full bg-primary transition-all duration-500"
+            style={{ width: `${translationPercent}%` }}
+          />
+        </span>
+      )}
+    </span>
+  ) : null;
+
+  const translationToggle =
+    hasTranslation || isTranslating ? (
+      <div className="flex items-center justify-end gap-2 px-1 pb-2">
+        {translationProgress}
+        {hasTranslation && (
+          <div className="flex overflow-hidden rounded-md border text-xs">
+            <button
+              type="button"
+              onClick={() => setShowTranslationOverride(false)}
+              className={cn(
+                "px-2 py-1",
+                !showTranslation
+                  ? "bg-muted font-medium text-foreground"
+                  : "text-muted-foreground",
+              )}
+            >
+              {t("preview.show_original", "Original")}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowTranslationOverride(true)}
+              className={cn(
+                "px-2 py-1",
+                showTranslation
+                  ? "bg-muted font-medium text-foreground"
+                  : "text-muted-foreground",
+              )}
+            >
+              {t("preview.show_translation", "日本語")}
+            </button>
+          </div>
+        )}
+      </div>
+    ) : null;
+
   let content;
   if (isCachedContentLoading) {
     content = <FullPageSpinner />;
-  } else if (!cachedContent) {
+  } else if (!displayContent) {
     content = (
       <div className="flex h-full w-full items-center justify-center p-4">
         <div className="max-w-sm space-y-4 text-center">
@@ -133,52 +248,55 @@ export default function ReaderView({
     );
   } else {
     content = (
-      <ScrollProgressTracker
-        onSavePosition={onSavePosition}
-        onScrollPositionChange={onScrollPositionChange}
-        restorePosition={restorePosition}
-        readingProgressOffset={readingProgressOffset}
-        readingProgressAnchor={readingProgressAnchor}
-        showProgressBar
-        progressBarStyle={progressBarStyle}
-      >
-        {showBanner && (
-          <ReadingProgressBanner
-            percent={bannerPercent}
-            onContinue={onContinue}
-            onDismiss={onDismiss}
+      <div className="flex h-full flex-col">
+        {translationToggle}
+        <ScrollProgressTracker
+          onSavePosition={onSavePosition}
+          onScrollPositionChange={onScrollPositionChange}
+          restorePosition={restorePosition}
+          readingProgressOffset={readingProgressOffset}
+          readingProgressAnchor={readingProgressAnchor}
+          showProgressBar
+          progressBarStyle={progressBarStyle}
+        >
+          {showBanner && (
+            <ReadingProgressBanner
+              percent={bannerPercent}
+              onContinue={onContinue}
+              onDismiss={onDismiss}
+            />
+          )}
+          <BookmarkHTMLHighlighter
+            className={className}
+            style={style}
+            htmlContent={displayContent || ""}
+            highlights={highlights?.highlights ?? []}
+            readOnly={readOnly || (showTranslation && hasTranslation)}
+            onDeleteHighlight={(h) =>
+              deleteHighlight({
+                highlightId: h.id,
+              })
+            }
+            onUpdateHighlight={(h) =>
+              updateHighlight({
+                highlightId: h.id,
+                color: h.color,
+                note: h.note,
+              })
+            }
+            onHighlight={(h) =>
+              createHighlight({
+                startOffset: h.startOffset,
+                endOffset: h.endOffset,
+                color: h.color,
+                bookmarkId,
+                text: h.text,
+                note: h.note ?? null,
+              })
+            }
           />
-        )}
-        <BookmarkHTMLHighlighter
-          className={className}
-          style={style}
-          htmlContent={cachedContent || ""}
-          highlights={highlights?.highlights ?? []}
-          readOnly={readOnly}
-          onDeleteHighlight={(h) =>
-            deleteHighlight({
-              highlightId: h.id,
-            })
-          }
-          onUpdateHighlight={(h) =>
-            updateHighlight({
-              highlightId: h.id,
-              color: h.color,
-              note: h.note,
-            })
-          }
-          onHighlight={(h) =>
-            createHighlight({
-              startOffset: h.startOffset,
-              endOffset: h.endOffset,
-              color: h.color,
-              bookmarkId,
-              text: h.text,
-              note: h.note ?? null,
-            })
-          }
-        />
-      </ScrollProgressTracker>
+        </ScrollProgressTracker>
+      </div>
     );
   }
   return content;

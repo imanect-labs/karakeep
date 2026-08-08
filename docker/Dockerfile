@@ -9,7 +9,18 @@ RUN apt-get update \
     && cargo install monolith --locked
 
 ################# Base Builder ##############
-FROM node:24-slim AS base
+# Node は 24.18 に固定する。24.19.0 で node::ObjectWrap のコンストラクタ／
+# デストラクタが AddEnvironmentCleanupHook / RemoveEnvironmentCleanupHook を
+# 呼ぶようになり（nodejs/node の node_object_wrap.h）、この 2 つは
+# Environment::GetCurrent(isolate) が null だと CHECK で abort する。
+# better-sqlite3 の Database / Statement は node::ObjectWrap を継承していて、
+# GC のウィークコールバック経由で（＝入場中のコンテキストが無い状態で）
+# 破棄されるため、
+#   Assertion failed: (env) != nullptr  →  SIGABRT（exit 134）
+# をランダムに踏む。実測でマイグレーションスクリプトの約 55% が起動直後に落ち、
+# init-db-migration が失敗してコンテナが起動しない、あるいはワーカーが
+# 再起動ループに入る。24.18 以前と 25.x / 26.x にはこの変更が無い。
+FROM node:24.18-slim AS base
 
 WORKDIR /app
 ENV PNPM_HOME="/pnpm"
@@ -75,7 +86,7 @@ RUN (cd apps/mcp && pnpm --config.verify-deps-before-run=false build)
 
 ################# The All-in-one builder ##############
 
-FROM node:24-slim AS aio_builder
+FROM node:24.18-slim AS aio_builder
 LABEL org.opencontainers.image.source="https://github.com/karakeep-app/karakeep"
 WORKDIR /app
 
@@ -202,7 +213,7 @@ ENV USING_LEGACY_SEPARATE_CONTAINERS=true
 
 ################# The cli ##############
 
-FROM node:24-slim AS cli
+FROM node:24.18-slim AS cli
 LABEL org.opencontainers.image.source="https://github.com/karakeep-app/karakeep"
 WORKDIR /app
 
@@ -217,7 +228,7 @@ ENTRYPOINT ["node", "index.mjs"]
 
 ################# MCP server ##############
 
-FROM node:24-slim AS mcp
+FROM node:24.18-slim AS mcp
 LABEL org.opencontainers.image.source="https://github.com/karakeep-app/karakeep"
 WORKDIR /app
 

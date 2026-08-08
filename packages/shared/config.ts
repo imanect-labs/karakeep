@@ -74,6 +74,13 @@ const allEnv = z.object({
   INFERENCE_TEXT_MODEL: z.string().default("gpt-4.1-mini"),
   INFERENCE_IMAGE_MODEL: z.string().default("gpt-4o-mini"),
   EMBEDDING_ENABLE_AUTO_INDEXING: stringBool("false"),
+  // Embeddings get their own provider (imanect-labs fork). Upstream sends them
+  // to whatever OPENAI_BASE_URL points at, which breaks as soon as that URL is
+  // a chat-completion relay with no /embeddings route. Leave these unset to
+  // keep upstream's behaviour of reusing the inference provider.
+  EMBEDDING_PROVIDER: z.enum(["openai", "ollama"]).optional(),
+  EMBEDDING_BASE_URL: z.string().url().optional(),
+  EMBEDDING_API_KEY: z.string().optional(),
   EMBEDDING_TEXT_MODEL: z.string().default("text-embedding-3-small"),
   EMBEDDING_DIMENSIONS: z.coerce.number().default(1536),
   EMBEDDING_CONTEXT_LENGTH: z.coerce.number().int().positive().default(8000),
@@ -88,6 +95,65 @@ const allEnv = z.object({
     .default("structured"),
   INFERENCE_ENABLE_AUTO_TAGGING: stringBool("true"),
   INFERENCE_ENABLE_AUTO_SUMMARIZATION: stringBool("false"),
+  // Briefing Recommender (imanect-labs fork). 既定値は ROADMAP の
+  // 「段階的な有効化」前半 2 週（trial 0% / random 15%）に合わせてある。
+  // trial を 10% に上げるのは config の変更だけで済ませる。
+  RECOMMENDER_ENABLED: stringBool("false"),
+  RECOMMENDER_CONTACT_URL: z.string().optional(),
+  RECOMMENDER_NUM_WORKERS: z.coerce.number().default(1),
+  RECOMMENDER_JOB_TIMEOUT_SEC: z.coerce.number().default(900),
+  RECOMMENDER_DAILY_INTAKE_CAP: z.coerce.number().int().positive().default(400),
+  RECOMMENDER_PER_SOURCE_FETCH_LIMIT: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(60),
+  RECOMMENDER_BRIEFING_SIZE: z.coerce.number().int().positive().default(20),
+  RECOMMENDER_CANDIDATE_TTL_DAYS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(14),
+  RECOMMENDER_CANDIDATE_PURGE_DAYS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(90),
+  RECOMMENDER_DOMAIN_SEATS: z.coerce.number().int().positive().default(80),
+  RECOMMENDER_MAX_TRIAL_DOMAINS: z.coerce.number().int().positive().default(10),
+  RECOMMENDER_ARM_EXPLOIT: z.coerce.number().default(0.55),
+  RECOMMENDER_ARM_ADJACENT: z.coerce.number().default(0.2),
+  RECOMMENDER_ARM_UNCERTAIN: z.coerce.number().default(0.1),
+  RECOMMENDER_ARM_TRIAL: z.coerce.number().default(0),
+  RECOMMENDER_ARM_RANDOM: z.coerce.number().default(0.15),
+  RECOMMENDER_SOFTMAX_TEMPERATURE: z.coerce.number().positive().default(0.15),
+  RECOMMENDER_EMBEDDING_DIMENSIONS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .optional(),
+  RECOMMENDER_EMBED_BATCH_SIZE: z.coerce.number().int().positive().default(16),
+  RECOMMENDER_DISCOVER_CRON: z.string().default("30 3 * * *"),
+  RECOMMENDER_COLLECT_CRON: z.string().default("0 4 * * *"),
+  RECOMMENDER_RANK_CRON: z.string().default("30 5 * * *"),
+  RECOMMENDER_TRAIN_CRON: z.string().default("0 3 * * *"),
+  RECOMMENDER_MAINTAIN_CRON: z.string().default("0 2 * * *"),
+  // 日本語ダイジェスト (rank 後の表示分だけ訳題・要約を生成する)。
+  //   off      … 生成しない
+  //   local    … Ollama (EMBEDDING_BASE_URL と同じサーバー) の chat API
+  //   external … OPENAI_BASE_URL の chat API (inference と同じプロバイダ)
+  RECOMMENDER_DIGEST_PROVIDER: z
+    .enum(["off", "local", "external"])
+    .default("off"),
+  RECOMMENDER_DIGEST_MODEL: z.string().default("qwen3.5:4b"),
+  // 記事本文が足りないときに URL を fetch して readability で抜くか。
+  RECOMMENDER_DIGEST_FETCH_BODY: stringBool("true"),
+  // 要約の入力に使う本文の最大文字数。長いほど品質は上がるが遅くなる。
+  RECOMMENDER_DIGEST_BODY_CHARS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(1000),
   OCR_CACHE_DIR: z.string().optional(),
   OCR_LANGS: z
     .string()
@@ -145,6 +211,28 @@ const allEnv = z.object({
   MAX_ASSET_SIZE_MB: z.coerce.number().default(50),
   HTML_CONTENT_SIZE_INLINE_THRESHOLD_BYTES: z.coerce.number().default(5 * 1024),
   INFERENCE_LANG: z.string().default("english"),
+  // How many of the user's existing tags to offer the model so it reuses them
+  // instead of inventing a variant or a translation. Most-used first; 0 disables.
+  INFERENCE_EXISTING_TAGS_LIMIT: z.coerce.number().int().min(0).default(200),
+  // Send `thinking: {type: "disabled"}` to the OpenAI-compatible endpoint to turn
+  // off reasoning. Needed for reasoning models (e.g. DeepSeek V4 Flash via OpenCode
+  // Go) that otherwise spend the whole output budget on reasoning and return empty
+  // content ("Got no message content"). (imanect-labs fork)
+  INFERENCE_DISABLE_THINKING: stringBool("false"),
+  // Structure-preserving LLM HTML translation (imanect-labs fork).
+  TRANSLATION_ENABLE_AUTO: stringBool("false"),
+  TRANSLATION_TARGET_LANG: z.string().default("japanese"),
+  TRANSLATION_NUM_WORKERS: z.coerce.number().default(1),
+  TRANSLATION_JOB_TIMEOUT_SEC: z.coerce.number().default(120),
+  // Approx input tokens per chunk sent to the LLM (output is similar in size).
+  TRANSLATION_CHUNK_TOKENS: z.coerce.number().default(1200),
+  // How many times a single chunk may be sent before giving up and keeping the
+  // cleanest attempt. The endpoint intermittently echoes the input untranslated,
+  // prepends a preamble, or rewrites code; resampling clears it. 1 disables.
+  TRANSLATION_MAX_CHUNK_ATTEMPTS: z.coerce.number().int().min(1).default(3),
+  // Skip translation when the content already looks like the target language
+  // (avoids re-translating e.g. Japanese pages). Uses a CJK/kana ratio heuristic.
+  TRANSLATION_SKIP_IF_TARGET: stringBool("true"),
   WEBHOOK_TIMEOUT_SEC: z.coerce.number().default(5),
   WEBHOOK_RETRY_TIMES: z.coerce.number().int().min(0).default(3),
   MAX_RSS_FEEDS_PER_USER: z.coerce.number().default(1000),
@@ -322,9 +410,11 @@ const serverConfigSchema = allEnv.transform((val, ctx) => {
       textModel: val.INFERENCE_TEXT_MODEL,
       imageModel: val.INFERENCE_IMAGE_MODEL,
       inferredTagLang: val.INFERENCE_LANG,
+      existingTagsLimit: val.INFERENCE_EXISTING_TAGS_LIMIT,
       contextLength: val.INFERENCE_CONTEXT_LENGTH,
       maxOutputTokens: val.INFERENCE_MAX_OUTPUT_TOKENS,
       useMaxCompletionTokens: val.INFERENCE_USE_MAX_COMPLETION_TOKENS,
+      disableThinking: val.INFERENCE_DISABLE_THINKING,
       outputSchema:
         val.INFERENCE_SUPPORTS_STRUCTURED_OUTPUT !== undefined
           ? val.INFERENCE_SUPPORTS_STRUCTURED_OUTPUT
@@ -334,16 +424,64 @@ const serverConfigSchema = allEnv.transform((val, ctx) => {
       enableAutoTagging: val.INFERENCE_ENABLE_AUTO_TAGGING,
       enableAutoSummarization: val.INFERENCE_ENABLE_AUTO_SUMMARIZATION,
     },
+    translation: {
+      enableAuto: val.TRANSLATION_ENABLE_AUTO,
+      targetLang: val.TRANSLATION_TARGET_LANG,
+      numWorkers: val.TRANSLATION_NUM_WORKERS,
+      jobTimeoutSec: val.TRANSLATION_JOB_TIMEOUT_SEC,
+      chunkTokens: val.TRANSLATION_CHUNK_TOKENS,
+      maxChunkAttempts: val.TRANSLATION_MAX_CHUNK_ATTEMPTS,
+      skipIfTarget: val.TRANSLATION_SKIP_IF_TARGET,
+    },
     chat: {
       enabled: val.CHAT_ENABLED,
     },
     embedding: {
       enableAutoIndexing: val.EMBEDDING_ENABLE_AUTO_INDEXING,
+      provider: val.EMBEDDING_PROVIDER,
+      baseUrl: val.EMBEDDING_BASE_URL,
+      apiKey: val.EMBEDDING_API_KEY,
       textModel: val.EMBEDDING_TEXT_MODEL,
       dimensions: val.EMBEDDING_DIMENSIONS,
       contextLength: val.EMBEDDING_CONTEXT_LENGTH,
       numWorkers: val.EMBEDDING_NUM_WORKERS,
       jobTimeoutSec: val.EMBEDDING_JOB_TIMEOUT_SEC,
+    },
+    recommender: {
+      enabled: val.RECOMMENDER_ENABLED,
+      contactUrl: val.RECOMMENDER_CONTACT_URL,
+      numWorkers: val.RECOMMENDER_NUM_WORKERS,
+      jobTimeoutSec: val.RECOMMENDER_JOB_TIMEOUT_SEC,
+      dailyIntakeCap: val.RECOMMENDER_DAILY_INTAKE_CAP,
+      perSourceFetchLimit: val.RECOMMENDER_PER_SOURCE_FETCH_LIMIT,
+      briefingSize: val.RECOMMENDER_BRIEFING_SIZE,
+      candidateTtlDays: val.RECOMMENDER_CANDIDATE_TTL_DAYS,
+      candidatePurgeDays: val.RECOMMENDER_CANDIDATE_PURGE_DAYS,
+      domainSeats: val.RECOMMENDER_DOMAIN_SEATS,
+      maxTrialDomains: val.RECOMMENDER_MAX_TRIAL_DOMAINS,
+      arms: {
+        exploit: val.RECOMMENDER_ARM_EXPLOIT,
+        adjacent: val.RECOMMENDER_ARM_ADJACENT,
+        uncertain: val.RECOMMENDER_ARM_UNCERTAIN,
+        trial: val.RECOMMENDER_ARM_TRIAL,
+        random: val.RECOMMENDER_ARM_RANDOM,
+      },
+      softmaxTemperature: val.RECOMMENDER_SOFTMAX_TEMPERATURE,
+      embeddingDimensions: val.RECOMMENDER_EMBEDDING_DIMENSIONS,
+      embedBatchSize: val.RECOMMENDER_EMBED_BATCH_SIZE,
+      cron: {
+        discover: val.RECOMMENDER_DISCOVER_CRON,
+        collect: val.RECOMMENDER_COLLECT_CRON,
+        rank: val.RECOMMENDER_RANK_CRON,
+        train: val.RECOMMENDER_TRAIN_CRON,
+        maintain: val.RECOMMENDER_MAINTAIN_CRON,
+      },
+      digest: {
+        provider: val.RECOMMENDER_DIGEST_PROVIDER,
+        model: val.RECOMMENDER_DIGEST_MODEL,
+        fetchBody: val.RECOMMENDER_DIGEST_FETCH_BODY,
+        bodyChars: val.RECOMMENDER_DIGEST_BODY_CHARS,
+      },
     },
     crawler: {
       numWorkers: val.CRAWLER_NUM_WORKERS,

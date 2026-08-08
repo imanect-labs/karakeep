@@ -885,6 +885,9 @@ importers:
       '@karakeep/db':
         specifier: workspace:^0.1.0
         version: link:../../packages/db
+      '@karakeep/recommender':
+        specifier: workspace:^0.1.0
+        version: link:../../packages/recommender
       '@karakeep/shared':
         specifier: workspace:^0.1.0
         version: link:../../packages/shared
@@ -1327,6 +1330,28 @@ importers:
       redis:
         specifier: ^5.11.0
         version: 5.11.0
+    devDependencies:
+      '@karakeep/tsconfig':
+        specifier: workspace:^0.1.0
+        version: link:../../tooling/typescript
+      vite-tsconfig-paths:
+        specifier: ^6.1.1
+        version: 6.1.1(typescript@5.9.3)(vite@7.0.6(@types/node@24.10.3)(jiti@2.4.2)(lightningcss@1.30.1)(sass@1.89.1)(terser@5.41.0)(tsx@4.21.0)(yaml@2.8.3))
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.4(@types/debug@4.1.12)(@types/node@24.10.3)(happy-dom@20.3.9)(jiti@2.4.2)(jsdom@27.4.0(@noble/hashes@1.8.0))(lightningcss@1.30.1)(sass@1.89.1)(terser@5.41.0)(tsx@4.21.0)(yaml@2.8.3)
+
+  packages/recommender:
+    dependencies:
+      '@karakeep/shared':
+        specifier: workspace:^0.1.0
+        version: link:../shared
+      rss-parser:
+        specifier: ^3.13.0
+        version: 3.13.0
+      zod:
+        specifier: ^4.0.0
+        version: 4.3.6
     devDependencies:
       '@karakeep/tsconfig':
         specifier: workspace:^0.1.0
