@@ -122,6 +122,8 @@ type EventLogInternal =
       "recommender.fetched"?: number;
       "recommender.inserted"?: number;
       "recommender.new_domains"?: number;
+      "recommender.digests_generated"?: number;
+      "recommender.digests_failed"?: number;
     }
   | {
       ["event.name"]: "recommenderEmbedWorker.run";

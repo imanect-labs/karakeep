@@ -213,6 +213,13 @@ export const zRecommenderTaskSchema = z.discriminatedUnion("type", [
     userId: z.string(),
     limit: z.number().optional(),
   }),
+  // 表示が確定した候補に日本語の訳題と要約を付ける（FR-U-13）。
+  // rank が投入する。cron からは呼ばない（briefingId が要る）。
+  z.object({
+    type: z.literal("digest"),
+    userId: z.string(),
+    briefingId: z.string(),
+  }),
 ]);
 export type ZRecommenderTask = z.infer<typeof zRecommenderTaskSchema>;
 

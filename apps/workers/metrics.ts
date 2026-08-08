@@ -60,11 +60,18 @@ export const recommenderEmbeddingsCounter = new Counter({
   labelNames: ["outcome"],
 });
 
+export const recommenderDigestsCounter = new Counter({
+  name: "karakeep_recommender_digests_total",
+  help: "Japanese briefing digests generated, by outcome",
+  labelNames: ["outcome"],
+});
+
 registry.registerMetric(workerStatsCounter);
 registry.registerMetric(recommenderCandidatesCounter);
 registry.registerMetric(recommenderSourceFailuresCounter);
 registry.registerMetric(recommenderBriefingsCounter);
 registry.registerMetric(recommenderDomainsCounter);
 registry.registerMetric(recommenderEmbeddingsCounter);
+registry.registerMetric(recommenderDigestsCounter);
 registry.registerMetric(crawlerStatusCodeCounter);
 registry.registerMetric(bookmarkCrawlLatencyHistogram);

@@ -20,6 +20,7 @@ import {
   scoreHeuristic,
   validateShares,
 } from "@karakeep/recommender";
+import { RecommenderQueue } from "@karakeep/shared-server";
 import serverConfig from "@karakeep/shared/config";
 import logger from "@karakeep/shared/logger";
 
@@ -178,6 +179,8 @@ export async function runRank(
     })
     .where(eq(recBriefings.id, briefingId));
 
+  await enqueueDigest(userId, briefingId, date, jobId);
+
   log(`selected ${selections.length}, logged ${shadow} unshown candidates`);
   return {
     briefingId,
@@ -186,6 +189,40 @@ export async function runRank(
     shadow,
     candidatesConsidered: candidates.length,
   };
+}
+
+/**
+ * 日本語ダイジェストを別ジョブに切り出す（FR-U-13）。
+ *
+ * **ここで待たない。** Briefing は 05:30 に原文で出て、日本語は数分後に
+ * 埋まる。ローカル LLM は 30 件で 6 分ほどかかり、落ちている日もある。
+ * rank の中で回すと、その日の Briefing 自体が出なくなる。
+ *
+ * 投入の失敗も rank を落とさない。翌日の rank でまた投入される。
+ */
+async function enqueueDigest(
+  userId: string,
+  briefingId: string,
+  date: string,
+  jobId: string,
+): Promise<void> {
+  if (serverConfig.recommender.digest.provider === "off") {
+    return;
+  }
+  try {
+    await RecommenderQueue.enqueue(
+      { type: "digest", userId, briefingId },
+      {
+        groupId: userId,
+        // rank を手で再実行しても、同じ日のダイジェストは 1 回しか走らない。
+        idempotencyKey: `rec:digest:${userId}:${date}`,
+      },
+    );
+  } catch (e) {
+    logger.error(
+      `[recommender][rank][${jobId}] failed to enqueue the digest job: ${e}`,
+    );
+  }
 }
 
 async function upsertBriefing(

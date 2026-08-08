@@ -1,6 +1,7 @@
 import {
   recommenderBriefingsCounter,
   recommenderCandidatesCounter,
+  recommenderDigestsCounter,
   recommenderDomainsCounter,
   recommenderEmbeddingsCounter,
   recommenderSourceFailuresCounter,
@@ -26,6 +27,7 @@ import { DequeuedJob, getQueueClient } from "@karakeep/shared/queueing";
 
 import { runBootstrap } from "./bootstrap";
 import { runCollect } from "./collect";
+import { runDigest } from "./digest";
 import { runDiscover } from "./discover";
 import { runEmbed } from "./embed";
 import { requeueUnobserved, runRewardJoin } from "./feedback";
@@ -88,6 +90,18 @@ async function runRecommenderTask(job: DequeuedJob<ZRecommenderTask>) {
     }
     case "bootstrap": {
       await runBootstrap(task.userId, task.limit, jobId);
+      return;
+    }
+    case "digest": {
+      const result = await runDigest(task.userId, task.briefingId, jobId);
+      addLogFields<"recommenderWorker.run">({
+        "recommender.digests_generated": result.generated,
+        "recommender.digests_failed": result.failed,
+      });
+      recommenderDigestsCounter.labels("success").inc(result.generated);
+      recommenderDigestsCounter.labels("cached").inc(result.cached);
+      recommenderDigestsCounter.labels("failure").inc(result.failed);
+      recommenderDigestsCounter.labels("skipped").inc(result.skipped);
       return;
     }
     case "reward_join": {
@@ -190,7 +204,8 @@ export class RecommenderEmbedWorker {
 
 function scheduleDaily(
   expression: string,
-  type: Exclude<ZRecommenderTask["type"], "bootstrap">,
+  // digest は rank が briefingId 付きで投入するので、cron からは呼べない。
+  type: Exclude<ZRecommenderTask["type"], "bootstrap" | "digest">,
 ) {
   return cron.schedule(
     expression,

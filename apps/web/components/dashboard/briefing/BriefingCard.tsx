@@ -19,6 +19,8 @@ export interface BriefingItem {
   url: string;
   title: string | null;
   summary: string | null;
+  titleJa: string | null;
+  summaryJa: string | null;
   domain: string | null;
   domainStatus: string | null;
   isTrialDomain: boolean;
@@ -99,6 +101,13 @@ export default function BriefingCard({
   const dismissed = item.events.includes("dismissed");
   const armLabel = item.arm ? ARM_LABELS[item.arm] : "";
 
+  // 訳題があればそれを主表示にし、原題を小さく下に添える。ダイジェストが
+  // まだ無い・失敗した記事は原題だけになる（原題の重複は出さない）。
+  const original = item.title ?? item.url;
+  const headline = item.titleJa ?? original;
+  const subtitle = item.titleJa && item.titleJa !== original ? original : null;
+  const summary = item.summaryJa ?? item.summary;
+
   return (
     <article
       ref={ref}
@@ -121,8 +130,13 @@ export default function BriefingCard({
             onClick={onOpen}
             className="break-words text-lg font-medium hover:underline"
           >
-            {item.title ?? item.url}
+            {headline}
           </a>
+          {subtitle && (
+            <p className="break-words text-xs text-muted-foreground/80">
+              {subtitle}
+            </p>
+          )}
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground sm:text-xs">
             {item.domain && <span className="break-all">{item.domain}</span>}
             {item.publishedAt && (
@@ -146,9 +160,13 @@ export default function BriefingCard({
         </span>
       </div>
 
-      {item.summary && (
-        <p className="line-clamp-3 break-words text-[0.9375rem] text-muted-foreground sm:text-sm">
-          {item.summary}
+      {/*
+        日本語要約は 120 字以内で作らせているので 4 行あれば大抵収まる
+        （原文の summary に落ちたときだけ途中で切れる）。
+      */}
+      {summary && (
+        <p className="line-clamp-4 break-words text-[0.9375rem] text-muted-foreground sm:text-sm">
+          {summary}
         </p>
       )}
 
