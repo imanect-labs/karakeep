@@ -12,7 +12,7 @@ import {
   zEmbeddingsRequestSchema,
 } from "@karakeep/shared-server";
 import serverConfig from "@karakeep/shared/config";
-import { InferenceClientFactory } from "@karakeep/shared/inference";
+import { EmbeddingClientFactory } from "@karakeep/shared/embedding";
 import logger from "@karakeep/shared/logger";
 import {
   DequeuedJob,
@@ -425,10 +425,13 @@ async function runEmbed(
     "user.id": bookmark.userId,
   });
 
-  const inferenceClient = InferenceClientFactory.build();
-  if (!inferenceClient) {
+  // Embeddings go through their own provider (imanect-labs fork). Falls back to
+  // the inference provider when EMBEDDING_BASE_URL is unset, so this is a no-op
+  // for upstream configurations.
+  const embeddingClient = EmbeddingClientFactory.build();
+  if (!embeddingClient) {
     logger.debug(
-      `[embeddings][${jobId}] No inference client configured, skipping embedding generation`,
+      `[embeddings][${jobId}] No embedding client configured, skipping embedding generation`,
     );
     if (shouldTag) {
       await enqueueTagging(bookmarkId, bookmark.userId, job.priority);
@@ -454,7 +457,7 @@ async function runEmbed(
     `[embeddings][${jobId}] Embedding text length: ${embeddingText.length} characters`,
   );
 
-  const embeddingResponse = await inferenceClient.generateEmbeddingFromText([
+  const embeddingResponse = await embeddingClient.generateEmbeddingFromText([
     embeddingText,
   ]);
 

@@ -1,4 +1,6 @@
-FROM node:24-alpine
+# 24.19.0 の node::ObjectWrap 変更で better-sqlite3 が GC 時に abort する。
+# 理由は docker/Dockerfile のコメントを参照。
+FROM node:24.18-alpine
 
 WORKDIR /app
 ENV PNPM_HOME="/pnpm"

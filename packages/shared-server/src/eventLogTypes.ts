@@ -113,6 +113,25 @@ type EventLogInternal =
       "embedding.total_tokens"?: number;
     }
   | {
+      // Briefing recommender (imanect-labs fork).
+      ["event.name"]: "recommenderWorker.run";
+      "recommender.task"?: string;
+      "user.id"?: string;
+      "recommender.sources_tried"?: number;
+      "recommender.sources_failed"?: number;
+      "recommender.fetched"?: number;
+      "recommender.inserted"?: number;
+      "recommender.new_domains"?: number;
+    }
+  | {
+      ["event.name"]: "recommenderEmbedWorker.run";
+      "user.id"?: string;
+      "recommender.embedded"?: number;
+      "recommender.embed_failed"?: number;
+      "recommender.duplicates"?: number;
+      "recommender.clusters"?: number;
+    }
+  | {
       ["event.name"]: "backupWorker.run";
       "backup.id"?: string;
       "backup.bookmark_count"?: number;

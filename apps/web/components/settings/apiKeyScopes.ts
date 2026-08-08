@@ -61,6 +61,14 @@ const RESOURCE_TRANSLATION_KEYS = {
     descriptionKey: "settings.api_keys.scopes.resources.prompts.description",
     hidden: false,
   },
+  // imanect-labs fork: briefing recommender. MCP Tool（Phase 4）が使うので
+  // スコープは切ってあるが、UI では隠しておく。
+  recommender: {
+    labelKey: "settings.api_keys.scopes.resources.recommender.label",
+    descriptionKey:
+      "settings.api_keys.scopes.resources.recommender.description",
+    hidden: true,
+  },
   rules: {
     labelKey: "settings.api_keys.scopes.resources.rules.label",
     descriptionKey: "settings.api_keys.scopes.resources.rules.description",

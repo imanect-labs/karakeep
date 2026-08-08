@@ -28,6 +28,16 @@ instrumentDatabase(sqlite);
 export const db = drizzle(sqlite, { schema });
 export type DB = typeof db;
 
+/**
+ * SQLite のハンドルを明示的に閉じる。
+ *
+ * 短命なスクリプト（マイグレーションなど）や、終了処理を持つプロセスから
+ * 呼ぶ。WAL のチェックポイントを終了前に確実に走らせるため。
+ */
+export function closeDatabase() {
+  sqlite.close();
+}
+
 export function getInMemoryDB(runMigrations: boolean) {
   const mem = new Database(":memory:");
   const db = drizzle(mem, { schema, logger: false });

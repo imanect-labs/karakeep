@@ -15,6 +15,8 @@ import {
   LowPriorityCrawlerQueue,
   OpenAIQueue,
   prepareQueue,
+  RecommenderEmbedQueue,
+  RecommenderQueue,
   RuleEngineQueue,
   SearchIndexingQueue,
   shutdownEventLogger,
@@ -27,6 +29,8 @@ import {
 import serverConfig from "@karakeep/shared/config";
 import logger from "@karakeep/shared/logger";
 
+import { closeDatabase } from "@karakeep/db";
+
 import { shutdownPromise } from "./exit";
 import { AdminMaintenanceWorker } from "./workers/adminMaintenanceWorker";
 import { AssetPreprocessingWorker } from "./workers/assetPreprocessingWorker";
@@ -36,6 +40,11 @@ import { EmbeddingsWorker } from "./workers/embeddingsWorker";
 import { FeedRefreshingWorker, FeedWorker } from "./workers/feedWorker";
 import { ImportWorker } from "./workers/importWorker";
 import { OpenAiWorker } from "./workers/inference/inferenceWorker";
+import {
+  RecommenderEmbedWorker,
+  RecommenderSchedulingWorker,
+  RecommenderWorker,
+} from "./workers/recommender";
 import { RuleEngineWorker } from "./workers/ruleEngineWorker";
 import { SearchIndexingWorker } from "./workers/searchWorker";
 import { TranslationWorker } from "./workers/translation/translationWorker";
@@ -95,13 +104,32 @@ const workerBuilders = {
     await BackupQueue.ensureInit();
     return BackupWorker.build();
   },
+  recommender: async () => {
+    await RecommenderQueue.ensureInit();
+    return RecommenderWorker.build();
+  },
+  recommenderEmbed: async () => {
+    await RecommenderEmbedQueue.ensureInit();
+    return RecommenderEmbedWorker.build();
+  },
 } as const;
 
 type WorkerName = keyof typeof workerBuilders | "import";
 const enabledWorkers = new Set(serverConfig.workers.enabledWorkers);
 const disabledWorkers = new Set(serverConfig.workers.disabledWorkers);
 
+// 推薦機能のキューランナー。RECOMMENDER_ENABLED が false のあいだは
+// そもそも起動しない。無効な機能のためにポーリングを 2 本回す理由がなく、
+// 既存デプロイのワーカープロセスに一切触れないようにするため。
+const recommenderWorkers = new Set<WorkerName>([
+  "recommender",
+  "recommenderEmbed",
+]);
+
 function isWorkerEnabled(name: WorkerName) {
+  if (recommenderWorkers.has(name) && !serverConfig.recommender.enabled) {
+    return false;
+  }
   if (enabledWorkers.size > 0 && !enabledWorkers.has(name)) {
     return false;
   }
@@ -139,6 +167,10 @@ async function main() {
     BackupSchedulingWorker.start();
   }
 
+  if (workers.some((w) => w.name === "recommender")) {
+    RecommenderSchedulingWorker.start();
+  }
+
   // Start import polling worker
   let importWorker: ImportWorker | null = null;
   let importWorkerPromise: Promise<void> | null = null;
@@ -166,6 +198,9 @@ async function main() {
   if (workers.some((w) => w.name === "backup")) {
     BackupSchedulingWorker.stop();
   }
+  if (workers.some((w) => w.name === "recommender")) {
+    RecommenderSchedulingWorker.stop();
+  }
   if (importWorker) {
     importWorker.stop();
   }
@@ -175,6 +210,8 @@ async function main() {
   await httpServer.stop();
   await shutdownEventLogger();
   await shutdownTracing();
+  // 終了前に WAL のチェックポイントを走らせる。
+  closeDatabase();
   process.exit(0);
 }
 

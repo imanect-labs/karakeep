@@ -29,7 +29,7 @@ function isNumberArray2D(value: unknown): value is number[][] {
   return Array.isArray(value) && value.every(isNumberArray);
 }
 
-function parseEmbeddingResponse(response: unknown): number[][] {
+export function parseEmbeddingResponse(response: unknown): number[][] {
   if (!response || typeof response !== "object") {
     throw new Error(`Got invalid embedding response from inference provider`);
   }
@@ -73,7 +73,7 @@ function getNumericField(
   return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
 }
 
-function parseEmbeddingUsage(response: unknown): {
+export function parseEmbeddingUsage(response: unknown): {
   promptTokens: number | undefined;
   totalTokens: number | undefined;
 } {
