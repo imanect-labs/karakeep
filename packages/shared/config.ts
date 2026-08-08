@@ -138,6 +138,22 @@ const allEnv = z.object({
   RECOMMENDER_RANK_CRON: z.string().default("30 5 * * *"),
   RECOMMENDER_TRAIN_CRON: z.string().default("0 3 * * *"),
   RECOMMENDER_MAINTAIN_CRON: z.string().default("0 2 * * *"),
+  // 日本語ダイジェスト (rank 後の表示分だけ訳題・要約を生成する)。
+  //   off      … 生成しない
+  //   local    … Ollama (EMBEDDING_BASE_URL と同じサーバー) の chat API
+  //   external … OPENAI_BASE_URL の chat API (inference と同じプロバイダ)
+  RECOMMENDER_DIGEST_PROVIDER: z
+    .enum(["off", "local", "external"])
+    .default("off"),
+  RECOMMENDER_DIGEST_MODEL: z.string().default("qwen3.5:4b"),
+  // 記事本文が足りないときに URL を fetch して readability で抜くか。
+  RECOMMENDER_DIGEST_FETCH_BODY: stringBool("true"),
+  // 要約の入力に使う本文の最大文字数。長いほど品質は上がるが遅くなる。
+  RECOMMENDER_DIGEST_BODY_CHARS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(1000),
   OCR_CACHE_DIR: z.string().optional(),
   OCR_LANGS: z
     .string()
@@ -459,6 +475,12 @@ const serverConfigSchema = allEnv.transform((val, ctx) => {
         rank: val.RECOMMENDER_RANK_CRON,
         train: val.RECOMMENDER_TRAIN_CRON,
         maintain: val.RECOMMENDER_MAINTAIN_CRON,
+      },
+      digest: {
+        provider: val.RECOMMENDER_DIGEST_PROVIDER,
+        model: val.RECOMMENDER_DIGEST_MODEL,
+        fetchBody: val.RECOMMENDER_DIGEST_FETCH_BODY,
+        bodyChars: val.RECOMMENDER_DIGEST_BODY_CHARS,
       },
     },
     crawler: {

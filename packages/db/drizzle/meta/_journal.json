@@ -666,6 +666,13 @@
       "when": 1786066176535,
       "tag": "0094_recommender_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "6",
+      "when": 1786219385241,
+      "tag": "0095_briefing_japanese_digest",
+      "breakpoints": true
     }
   ]
 }

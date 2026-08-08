@@ -1545,6 +1545,17 @@ export const recCandidates = sqliteTable(
     fetchedAt: integer("fetchedAt", { mode: "timestamp" }),
     lang: text("lang"),
 
+    // 日本語ダイジェスト (FR-U-13)。rank で表示が確定した候補だけに生成する
+    // (1 日 30 件)。candidate 側に持つのは永続キャッシュのため — 同じ記事が
+    // 翌日も選ばれたとき再生成しない。
+    titleJa: text("titleJa"),
+    summaryJa: text("summaryJa"),
+    digestStatus: text("digestStatus", {
+      enum: ["pending", "success", "failure", "skipped"],
+    }),
+    // プロンプトやモデルを替えたら再生成できるように、生成に使ったモデルを持つ。
+    digestModelId: text("digestModelId"),
+
     embedding: blob("embedding", { mode: "buffer" }),
     // 埋め込みモデルを差し替えたら再計算が要る。混在を検出できるように
     // 候補ごとにモデル ID を持つ (requirements.md §10)。
