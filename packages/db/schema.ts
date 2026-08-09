@@ -1855,6 +1855,53 @@ export const recModels = sqliteTable(
   (t) => [index("recModels_userId_status_idx").on(t.userId, t.status)],
 );
 
+/**
+ * 記事単位の共有キャッシュ（FR-S-06）。
+ *
+ * **この表に `userId` が無いのは意図的で、それがこの表の存在理由そのもの。**
+ * 日本語ダイジェストも埋め込みも「その記事が何であるか」だけで決まり、
+ * 誰が読むかに依存しない。`recCandidates` は `(userId, urlHash)` 一意なので、
+ * 5 人が同じ収集元を使えば同じ記事を 5 回訳し 5 回埋め込むことになる。
+ * ローカル LLM は concurrency 1 で回しているので、そこが朝の律速になる。
+ *
+ * 読み出しの正本は `recCandidates` のまま。ここは cache-aside で、
+ * `embed` / `digest` が生成前に引き、生成後に書くだけ。ランキングも UI も
+ * この表を知らない。
+ *
+ * プライバシー: 書き込むのは `origin='collected'` の候補由来のものだけ。
+ * `origin='bootstrap'` は本人のブックマークなので、`urlHash` の行が在ること
+ * 自体が「誰かがこの URL を保存した」という信号になる。読むのは許す
+ * （その行は既に誰かの収集結果として存在しているので何も漏れない）。
+ */
+export const recArticleCache = sqliteTable(
+  "recArticleCache",
+  {
+    urlHash: text("urlHash").notNull().primaryKey(),
+    // 調査用。キャッシュの引き当てには使わない。
+    canonicalUrl: text("canonicalUrl").notNull(),
+
+    titleJa: text("titleJa"),
+    summaryJa: text("summaryJa"),
+    digestModelId: text("digestModelId"),
+    digestedAt: integer("digestedAt", { mode: "timestamp" }),
+
+    embedding: blob("embedding", { mode: "buffer" }),
+    embeddingModelId: text("embeddingModelId"),
+    // **次元を別に持つ必要がある。** OllamaEmbeddingClient.modelId は
+    // `ollama/<model>` で、RECOMMENDER_EMBEDDING_DIMENSIONS を含まない。
+    // 次元は embedDocuments が後から MRL 切り詰めで適用するので、768 → 512 の
+    // 変更は modelId からは見えない。モデル ID だけで判定すると、次元の
+    // 違うベクトルを別ユーザーへ配ることになる。
+    embeddingDimensions: integer("embeddingDimensions"),
+    embeddedAt: integer("embeddedAt", { mode: "timestamp" }),
+
+    // maintain の掃除に使う。誰も参照しなくなった記事を落とす。
+    lastUsedAt: integer("lastUsedAt", { mode: "timestamp" }),
+    createdAt: createdAtField(),
+  },
+  (t) => [index("recArticleCache_lastUsedAt_idx").on(t.lastUsedAt)],
+);
+
 export const recDomainsRelations = relations(recDomains, ({ one, many }) => ({
   user: one(users, {
     fields: [recDomains.userId],
