@@ -28,6 +28,27 @@ const POSITIVE_EVENTS = [
   "read_full",
 ] as const;
 
+/**
+ * 負例とみなすイベント。
+ *
+ * `read_abandoned` は「訳して読むと言っておいて 7 日間何も起きなかった」で、
+ * `runRewardJoin` が派生させる（FR-U-14）。明示的に押した `dismissed` より
+ * 弱い証拠なので、重みで差を付ける（下の NEGATIVE_WEIGHTS）。
+ */
+const NEGATIVE_EVENTS = ["dismissed", "read_abandoned"] as const;
+
+/**
+ * サンプルの重み。
+ *
+ * 保存は最も強い明示的正例（§6.1 の重み）。`read_abandoned` は推測なので
+ * 半分に割り引く — ここを 1.0 にすると、読み切らなかっただけの記事が
+ * 「興味なし」と同じ強さで興味の重心を押し下げる。
+ */
+const SAMPLE_WEIGHTS: Record<string, number> = {
+  saved: 1.2,
+  read_abandoned: 0.5,
+};
+
 /** 直近プロフィールの窓。半減期 7 日なので 60 日より前は寄与がほぼ 0。 */
 const PROFILE_WINDOW_DAYS = 180;
 
@@ -130,15 +151,14 @@ async function loadSamples(
         isNotNull(recCandidates.embedding),
         kind === "positive"
           ? inArray(recFeedbackEvents.eventType, [...POSITIVE_EVENTS])
-          : eq(recFeedbackEvents.eventType, "dismissed"),
+          : inArray(recFeedbackEvents.eventType, [...NEGATIVE_EVENTS]),
       ),
     );
 
   return rows.map((row) => ({
     vector: deserializeVector(row.embedding!),
     occurredAt: row.occurredAt,
-    // 保存は最も強い明示的正例（§6.1 の重み）。
-    weight: row.eventType === "saved" ? 1.2 : 1,
+    weight: SAMPLE_WEIGHTS[row.eventType] ?? 1,
   }));
 }
 

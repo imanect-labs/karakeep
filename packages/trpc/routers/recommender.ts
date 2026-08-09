@@ -16,7 +16,16 @@ import { createScopedAuthedProcedure, router } from "../index";
 
 const recommenderProcedure = createScopedAuthedProcedure("recommender");
 
-const zEventType = z.enum(["viewed", "clicked", "saved", "liked", "dismissed"]);
+// UI から直接送れるイベント。`read_abandoned` は派生イベントで
+// `runRewardJoin` だけが書くので、ここには入れない。
+const zEventType = z.enum([
+  "viewed",
+  "clicked",
+  "saved",
+  "liked",
+  "dismissed",
+  "read_intent",
+]);
 
 const zDismissReason = z.enum([
   "off_topic",

@@ -16,6 +16,7 @@ import type { RewardEvent } from "@karakeep/recommender";
 import {
   computeReward,
   finalizeObservation,
+  isAbandonedRead,
   readingProgressEvent,
 } from "@karakeep/recommender";
 import serverConfig from "@karakeep/shared/config";
@@ -30,6 +31,7 @@ export interface RewardJoinResult {
   briefingsFinalized: number;
   examinedMarked: number;
   delayedEvents: number;
+  abandonedReads: number;
   rewardsFinalized: number;
   domainsUpdated: number;
 }
@@ -39,11 +41,14 @@ export interface RewardJoinResult {
  *
  * 1. 昨日以前の Briefing の観測状態と `examined` を確定する
  * 2. 保存されたブックマークの読了・ハイライト・お気に入りを遅延報酬として join
- * 3. 観測窓を過ぎた impression の報酬を確定する
- * 4. ドメインとクラスタのカウントを更新する
+ * 3. 「訳して読む」が空振りに終わったものを弱い負例にする
+ * 4. 観測窓を過ぎた impression の報酬を確定する
+ * 5. ドメインとクラスタのカウントを更新する
  *
  * **順序が意味を持つ。** `examined` を先に確定しないと、ドメインの
  * `examinedCount` が実際より少なくなり、降格も昇格も判定がずれる。
+ * 3 は 2 の後・4 の前でなければならない — 2 が書いた読了イベントを見て
+ * 判定し、その結果を 4 の報酬計算に含める必要がある。
  */
 export async function runRewardJoin(
   userId: string,
@@ -58,17 +63,20 @@ export async function runRewardJoin(
     now,
   );
   const delayedEvents = await joinDelayedRewards(userId, now);
+  const abandonedReads = await markAbandonedReads(userId, now);
   const rewardsFinalized = await finalizeRewards(userId, now);
   const domainsUpdated = await refreshCounters(userId);
 
   log(
     `finalized ${briefingsFinalized} briefings (${examinedMarked} examined), ` +
-      `${delayedEvents} delayed events, ${rewardsFinalized} rewards, ${domainsUpdated} domains`,
+      `${delayedEvents} delayed events, ${abandonedReads} abandoned reads, ` +
+      `${rewardsFinalized} rewards, ${domainsUpdated} domains`,
   );
   return {
     briefingsFinalized,
     examinedMarked,
     delayedEvents,
+    abandonedReads,
     rewardsFinalized,
     domainsUpdated,
   };
@@ -236,6 +244,70 @@ async function joinDelayedRewards(userId: string, now: Date): Promise<number> {
 }
 
 /**
+ * 「訳して読む」が空振りに終わったものを弱い負例にする（FR-U-14）。
+ *
+ * 「訳して読む」(`read_intent`) は正例でも負例でもない**意図の記録**で、
+ * 押した時点では何も判断しない。観測窓 (7 日) を過ぎても保存・いいね・
+ * 読了・ハイライト・お気に入りが 1 つも付かなかったら、そこで初めて
+ * 「読もうとしたが、読むに値しなかった」という弱い負例として確定する。
+ *
+ * **`read_partial` があるものは対象外。** 途中まで読んだのは engagement で
+ * あって空振りではない。負例は偽陽性のコストが高い（興味の重心が実態から
+ * ずれ、以後その方向の記事が出なくなる）ので、判定は保守的にする。
+ * 同じ理由で `dismissed` 済みのものも対象外 — 明示的な負例が既にある。
+ *
+ * 押した瞬間ではなく窓の満了時に判定するので、`joinDelayedRewards` の
+ * **後**に呼ぶこと。順序を逆にすると、読了イベントが書かれる前に空振りと
+ * 判定してしまう。
+ */
+async function markAbandonedReads(userId: string, now: Date): Promise<number> {
+  const cutoff = new Date(now.getTime() - REWARD_WINDOW_DAYS * 86_400_000);
+
+  const rows = await db
+    .select({
+      impressionId: recImpressions.id,
+      eventType: recFeedbackEvents.eventType,
+    })
+    .from(recImpressions)
+    .innerJoin(
+      recFeedbackEvents,
+      eq(recFeedbackEvents.impressionId, recImpressions.id),
+    )
+    .where(
+      and(
+        eq(recImpressions.userId, userId),
+        eq(recImpressions.rewardFinalized, false),
+        lt(recImpressions.createdAt, cutoff),
+      ),
+    );
+
+  const byImpression = new Map<string, Set<RewardEvent>>();
+  for (const row of rows) {
+    const set = byImpression.get(row.impressionId) ?? new Set<RewardEvent>();
+    set.add(row.eventType);
+    byImpression.set(row.impressionId, set);
+  }
+
+  const events: (typeof recFeedbackEvents.$inferInsert)[] = [];
+  for (const [impressionId, types] of byImpression) {
+    if (!isAbandonedRead([...types])) {
+      continue;
+    }
+    events.push({
+      impressionId,
+      userId,
+      eventType: "read_abandoned",
+      occurredAt: now,
+    });
+  }
+
+  for (const batch of chunk(events)) {
+    await db.insert(recFeedbackEvents).values(batch).onConflictDoNothing();
+  }
+  return events.length;
+}
+
+/**
  * 観測窓を過ぎた impression の報酬を確定する（FR-F-03）。
  * 確定後は更新しない — 学習中に過去のラベルが動くと再現性が消える。
  */
@@ -307,6 +379,10 @@ async function refreshCounters(userId: string): Promise<number> {
     "highlighted",
     "read_full",
   ]);
+  // クラスタの負例は「興味なし」だけ。`read_abandoned` は意図的に入れない
+  // — クラスタのカウントは整数で重みを付けられないので、足すと推測に
+  // すぎない空振りが、明示的に押された「興味なし」と同じ重さになる。
+  // 弱い負例として扱いたい場所は重みを掛けられる profiles.ts のほう。
   const dismissals = await impressionIdsWithEvents(userId, ["dismissed"]);
 
   const domainStats = new Map<string, { examined: number; positive: number }>();

@@ -14,7 +14,14 @@ export type RewardEvent =
   | "read_partial"
   | "read_full"
   | "highlighted"
-  | "favourited";
+  | "favourited"
+  // 「訳して読む」を押した（FR-U-14）。**正例でも負例でもない意図の記録。**
+  // 保存 (`saved`) は重み 1.2 と全イベント中で最大なので、読むために押した
+  // だけの記事にそれが付くと、興味の重心が実態から離れる。
+  | "read_intent"
+  // 上を押したのに観測窓を過ぎても何の反応も無かった（弱い負例）。
+  // 派生イベントで、`runRewardJoin` が書く。
+  | "read_abandoned";
 
 /** §6.1 の既定重み。 */
 export const DEFAULT_REWARD_WEIGHTS: Record<RewardEvent, number> = {
@@ -27,6 +34,13 @@ export const DEFAULT_REWARD_WEIGHTS: Record<RewardEvent, number> = {
   read_full: 0.8,
   highlighted: 0.9,
   favourited: 1.0,
+  // 意図そのものには報酬を与えない。読んだかどうかは read_partial /
+  // read_full が別に測る。
+  read_intent: 0,
+  // 「読むつもりで開いたのに何も起きなかった」。`dismissed` (-1.0) より
+  // 弱くする — 明示的に「興味なし」を押した人と、単に読まなかった人を
+  // 同じ強さで扱うと、後者が多いぶん負例が過剰になる。
+  read_abandoned: -0.4,
 };
 
 /**
@@ -58,6 +72,38 @@ const STRONG_POSITIVES: RewardEvent[] = [
 
 export function isStrongPositive(events: RewardEvent[]): boolean {
   return events.some((e) => STRONG_POSITIVES.includes(e));
+}
+
+/**
+ * 空振りではないと見なすイベント。**`read_partial` を含めるのが要点**で、
+ * 途中まで読んだものは負例にしない。
+ */
+const ENGAGEMENT_EVENTS: RewardEvent[] = [...STRONG_POSITIVES, "read_partial"];
+
+/**
+ * 「訳して読む」が空振りに終わったか（FR-U-14）。
+ *
+ * `read_intent` は押した時点では何も判断しない中立の記録で、観測窓を
+ * 過ぎてから初めてここで評価する。何の engagement も無ければ
+ * 「読もうとしたが、読むに値しなかった」という**弱い負例**にする。
+ *
+ * **判定は保守的にする。** 負例は偽陽性のコストが高い — 興味の重心が実態から
+ * ずれ、以後その方向の記事が出なくなる。しかも本人には見えない。だから
+ * 途中まで読んだもの (`read_partial`) も、既に明示的な負例がある
+ * (`dismissed`) ものも対象外にする。
+ *
+ * 呼び出し側は**観測窓が満了した impression にだけ**適用すること。まだ窓の
+ * 中のものに当てると、これから読む記事を先回りで負例にしてしまう。
+ */
+export function isAbandonedRead(events: RewardEvent[]): boolean {
+  const seen = new Set(events);
+  if (!seen.has("read_intent")) {
+    return false;
+  }
+  if (seen.has("dismissed") || seen.has("read_abandoned")) {
+    return false;
+  }
+  return !ENGAGEMENT_EVENTS.some((e) => seen.has(e));
 }
 
 export function isWeakPositive(events: RewardEvent[]): boolean {

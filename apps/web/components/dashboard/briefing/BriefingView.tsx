@@ -113,17 +113,23 @@ export default function BriefingView() {
     listRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
-  const handleSave = useCallback(
-    async (item: BriefingItem) => {
-      // FR-U-04: 既存のブックマーク作成フローをそのまま呼ぶ。crawl・要約・
-      // タグ付け・翻訳が通常どおり走る。
+  /**
+   * FR-U-04: 既存のブックマーク作成フローをそのまま呼ぶ。crawl・要約・
+   * タグ付け・翻訳が通常どおり走る。
+   *
+   * 記録するイベントだけを呼び分ける。ブックマークを作るところまでは
+   * 「保存」も「訳して読む」も同じ — 翻訳はブックマーク単位のワーカーなので、
+   * ブックマークを作らずに全文を訳す経路が無い。
+   */
+  const takeIntoLibrary = useCallback(
+    async (item: BriefingItem, eventType: "saved" | "read_intent") => {
       const bookmark = await createBookmark({
         type: BookmarkTypes.LINK,
         url: item.url,
       });
       await recordEvent.mutateAsync({
         impressionId: item.impressionId,
-        eventType: "saved",
+        eventType,
         bookmarkId: bookmark.id,
       });
     },
@@ -204,7 +210,10 @@ export default function BriefingView() {
                     eventType: "clicked",
                   })
                 }
-                onSave={() => void handleSave(item)}
+                onSave={() => void takeIntoLibrary(item, "saved")}
+                onReadTranslated={() =>
+                  void takeIntoLibrary(item, "read_intent")
+                }
                 onLike={() =>
                   recordEvent.mutate({
                     impressionId: item.impressionId,
