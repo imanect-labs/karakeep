@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
@@ -108,6 +108,40 @@ export default function BriefingCard({
   const subtitle = item.titleJa && item.titleJa !== original ? original : null;
   const summary = item.summaryJa ?? item.summary;
 
+  // 要約は既定で 4 行に畳むが、**畳んだせいで読めない要約があった**ので
+  // 展開できるようにする。日本語要約はプロンプトで 120 字以内と指示して
+  // いるが実測では平均 133 字・最大 206 字あり、3 割どころか 6 割 (18/30) が
+  // 指示を超えていた。RSS 由来の原文要約に落ちたときはさらに長い。
+  //
+  // 「長さで畳むかどうか決める」は幅とフォントに依存するので当たらない。
+  // 実際に溢れているかを測る。
+  const summaryRef = useRef<HTMLParagraphElement>(null);
+  const [summaryExpanded, setSummaryExpanded] = useState(false);
+  const [summaryOverflows, setSummaryOverflows] = useState(false);
+
+  // ダイジェストは Briefing の生成より数分遅れて埋まるので、表示中に
+  // summary が差し替わる。畳んだ状態に戻す。
+  useEffect(() => {
+    setSummaryExpanded(false);
+    setSummaryOverflows(false);
+  }, [summary]);
+
+  useEffect(() => {
+    const element = summaryRef.current;
+    // 展開中は scrollHeight === clientHeight になるので測らない。
+    // 測ると overflows が false に戻り、「折りたたむ」が消えてしまう。
+    if (!element || summaryExpanded) {
+      return;
+    }
+    const check = () =>
+      setSummaryOverflows(element.scrollHeight > element.clientHeight + 1);
+    check();
+    // 画面回転やサイドバーの開閉で行数が変わる。
+    const observer = new ResizeObserver(check);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [summary, summaryExpanded]);
+
   return (
     <article
       ref={ref}
@@ -160,14 +194,27 @@ export default function BriefingCard({
         </span>
       </div>
 
-      {/*
-        日本語要約は 120 字以内で作らせているので 4 行あれば大抵収まる
-        （原文の summary に落ちたときだけ途中で切れる）。
-      */}
       {summary && (
-        <p className="line-clamp-4 break-words text-[0.9375rem] text-muted-foreground sm:text-sm">
-          {summary}
-        </p>
+        <div className="flex flex-col items-start gap-1">
+          <p
+            ref={summaryRef}
+            className={cn(
+              "break-words text-[0.9375rem] text-muted-foreground sm:text-sm",
+              !summaryExpanded && "line-clamp-4",
+            )}
+          >
+            {summary}
+          </p>
+          {summaryOverflows && (
+            <button
+              type="button"
+              onClick={() => setSummaryExpanded((v) => !v)}
+              className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+            >
+              {summaryExpanded ? "折りたたむ" : "続きを読む"}
+            </button>
+          )}
+        </div>
       )}
 
       <p className="break-words text-sm italic text-muted-foreground sm:text-xs">
