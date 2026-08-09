@@ -1801,6 +1801,10 @@ export const recFeedbackEvents = sqliteTable(
         "read_full",
         "highlighted",
         "favourited",
+        // 「訳して読む」(FR-U-14)。正例でも負例でもない意図の記録と、
+        // その意図が観測窓のあいだ何にもならなかったという派生の弱い負例。
+        "read_intent",
+        "read_abandoned",
       ],
     }).notNull(),
     value: real("value"),

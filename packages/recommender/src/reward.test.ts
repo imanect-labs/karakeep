@@ -5,6 +5,7 @@ import {
   computeReward,
   DEFAULT_REWARD_WEIGHTS,
   finalizeObservation,
+  isAbandonedRead,
   isDismissed,
   isStrongPositive,
   isWeakPositive,
@@ -156,5 +157,57 @@ describe("reward weights as a whole", () => {
     expect(computeReward(["clicked", "read_full"])).toBeGreaterThan(
       computeReward(["clicked"]),
     );
+  });
+});
+
+describe("isAbandonedRead", () => {
+  it("空振りに終わった read_intent だけを拾う", () => {
+    expect(isAbandonedRead(["read_intent"])).toBe(true);
+    expect(isAbandonedRead(["read_intent", "viewed", "clicked"])).toBe(true);
+  });
+
+  it("read_intent が無ければ対象外", () => {
+    // 「保存したが読まなかった」は別の話。ここでは弱い負例にしない。
+    expect(isAbandonedRead(["saved"])).toBe(false);
+    expect(isAbandonedRead([])).toBe(false);
+    expect(isAbandonedRead(["viewed", "clicked"])).toBe(false);
+  });
+
+  it("engagement が 1 つでもあれば空振りではない", () => {
+    for (const event of [
+      "saved",
+      "liked",
+      "favourited",
+      "highlighted",
+      "read_full",
+    ] as const) {
+      expect(isAbandonedRead(["read_intent", event])).toBe(false);
+    }
+  });
+
+  it("途中まで読んだものは負例にしない", () => {
+    // 負例は偽陽性のコストが高いので判定は保守的にする。
+    expect(isAbandonedRead(["read_intent", "read_partial"])).toBe(false);
+  });
+
+  it("既に興味なしを押しているものは対象外", () => {
+    expect(isAbandonedRead(["read_intent", "dismissed"])).toBe(false);
+  });
+
+  it("二重に付けない", () => {
+    expect(isAbandonedRead(["read_intent", "read_abandoned"])).toBe(false);
+  });
+});
+
+describe("read_intent / read_abandoned の重み", () => {
+  it("意図そのものには報酬を与えない", () => {
+    expect(computeReward(["read_intent"])).toBe(0);
+  });
+
+  it("空振りは dismissed より弱い負例にする", () => {
+    const abandoned = computeReward(["read_intent", "read_abandoned"]);
+    const dismissed = computeReward(["dismissed"]);
+    expect(abandoned).toBeLessThan(0);
+    expect(abandoned).toBeGreaterThan(dismissed);
   });
 });

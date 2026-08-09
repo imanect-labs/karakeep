@@ -8,6 +8,7 @@ import {
   ExternalLink,
   FlaskConical,
   Heart,
+  Languages,
   X as XIcon,
 } from "lucide-react";
 
@@ -45,6 +46,7 @@ export default function BriefingCard({
   item,
   onOpen,
   onSave,
+  onReadTranslated,
   onLike,
   onDismiss,
   onViewed,
@@ -53,6 +55,7 @@ export default function BriefingCard({
   item: BriefingItem;
   onOpen: () => void;
   onSave: () => void;
+  onReadTranslated: () => void;
   onLike: () => void;
   onDismiss: () => void;
   onViewed: () => void;
@@ -96,7 +99,12 @@ export default function BriefingCard({
     };
   }, [onViewed]);
 
-  const saved = item.events.includes("saved") || !!item.bookmarkId;
+  const savedEvent = item.events.includes("saved");
+  const readIntent = item.events.includes("read_intent");
+  // ブックマークがあるだけでは「保存した」と言えない。「訳して読む」でも
+  // ブックマークは作られるので、bookmarkId を保存の証拠にすると
+  // 訳しただけの記事が「保存済み」と表示される。
+  const inLibrary = savedEvent || readIntent || !!item.bookmarkId;
   const liked = item.events.includes("liked");
   const dismissed = item.events.includes("dismissed");
   const armLabel = item.arm ? ARM_LABELS[item.arm] : "";
@@ -239,15 +247,32 @@ export default function BriefingCard({
             開く
           </a>
         </Button>
+        {/*
+          FR-U-14: 「訳して読む」と「保存」を分ける。
+          保存は全イベント中で最も重い正例 (1.2) なので、日本語で読みたい
+          だけの記事にそれが付くと興味の重心が実態から離れる。
+          こちらはブックマークを作る (翻訳がブックマーク単位のワーカーなので
+          必要) が、記録するのは中立の read_intent だけ。
+        */}
         <Button
-          variant={saved ? "default" : "outline"}
+          variant="outline"
           size="sm"
-          disabled={busy || saved}
+          disabled={busy || inLibrary}
+          onClick={onReadTranslated}
+          className="h-11 gap-1 sm:h-9"
+        >
+          <Languages className="size-4" />
+          {readIntent && !savedEvent ? "取り込み済み" : "訳して読む"}
+        </Button>
+        <Button
+          variant={savedEvent ? "default" : "outline"}
+          size="sm"
+          disabled={busy || savedEvent}
           onClick={onSave}
           className="h-11 gap-1 sm:h-9"
         >
           <Bookmark className="size-4" />
-          {saved ? "保存済み" : "保存"}
+          {savedEvent ? "保存済み" : "保存"}
         </Button>
         <Button
           variant={liked ? "default" : "outline"}
@@ -268,7 +293,7 @@ export default function BriefingCard({
           size="sm"
           disabled={busy || dismissed}
           onClick={onDismiss}
-          className="h-11 gap-1 text-muted-foreground sm:h-9"
+          className="col-span-2 h-11 gap-1 text-muted-foreground sm:col-span-1 sm:h-9"
         >
           <XIcon className="size-4" />
           {dismissed ? "興味なしにした" : "興味なし"}
