@@ -106,12 +106,26 @@ export default function BriefingView() {
     items: visibleItems,
   } = paginate(items, PAGE_SIZE, page);
 
-  const goToPage = useCallback((next: number) => {
-    setPage(next);
-    // ページを送ったら先頭へ。送った先の途中から始まると、読み飛ばしたのか
-    // 分からなくなる。ヘッダー分の余白を残したいので block: "start"。
+  // ページを送ったら先頭へ。送った先の途中から始まると、読み飛ばしたのか
+  // 分からなくなる。
+  //
+  // **クリックハンドラの中で scrollIntoView を呼んではいけない。** そこで
+  // 呼ぶとまだ旧レイアウトのままで、smooth スクロールが走っている最中に
+  // React が 10 枚のカードを差し替える。ブラウザはスクロール先の高さが
+  // 変わるとアニメーションを打ち切るので、**一番下に留まったままになる**
+  // (実際にそうなっていた)。DOM が入れ替わったあとに動かす必要がある。
+  //
+  // sm 以上ではスクローラは window ではなく <main> (SidebarLayout の
+  // sm:overflow-y-auto)。scrollIntoView は直近のスクロール可能な祖先を
+  // 動かすので、スマホ (window スクロール) と両方これで足りる。
+  const isFirstRender = useRef(true);
+  useEffect(() => {
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
+    }
     listRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, []);
+  }, [page]);
 
   /**
    * FR-U-04: 既存のブックマーク作成フローをそのまま呼ぶ。crawl・要約・
@@ -239,7 +253,7 @@ export default function BriefingView() {
                   size="sm"
                   className="h-11 gap-1 sm:h-9"
                   disabled={currentPage === 0}
-                  onClick={() => goToPage(currentPage - 1)}
+                  onClick={() => setPage(currentPage - 1)}
                 >
                   <ChevronLeft className="size-4" />
                   {/* 幅の狭い端末ではラベルを短くする。番号ボタンと並ぶと 375px に収まらない。 */}
@@ -255,7 +269,7 @@ export default function BriefingView() {
                       variant={i === currentPage ? "default" : "ghost"}
                       aria-current={i === currentPage ? "page" : undefined}
                       className="h-11 w-11 p-0 tabular-nums sm:h-9 sm:w-9"
-                      onClick={() => goToPage(i)}
+                      onClick={() => setPage(i)}
                     >
                       {i + 1}
                     </Button>
@@ -266,7 +280,7 @@ export default function BriefingView() {
                   size="sm"
                   className="h-11 gap-1 sm:h-9"
                   disabled={currentPage === pageCount - 1}
-                  onClick={() => goToPage(currentPage + 1)}
+                  onClick={() => setPage(currentPage + 1)}
                 >
                   <span className="hidden sm:inline">次の {PAGE_SIZE} 件</span>
                   <span className="sm:hidden">次へ</span>
