@@ -213,6 +213,14 @@ export const zRecommenderTaskSchema = z.discriminatedUnion("type", [
     userId: z.string(),
     limit: z.number().optional(),
   }),
+  // 自己登録の初回パイプライン（FR-U-15）。bootstrap → embed → collect →
+  // embed → rank を 1 ジョブで直列に流す。
+  //
+  // **3 ジョブに分けると壊れる。** このキューは concurrency 1 の FIFO だが、
+  // runCollect は埋め込みを RecommenderEmbedQueue へ渡すので 2 つのキューの
+  // 間に順序が無い。rank が埋め込み完了前に走り、embedding が null のまま
+  // ヒューリスティックに落ちる。cron からは呼ばない。
+  z.object({ type: z.literal("enroll"), userId: z.string() }),
   // 表示が確定した候補に日本語の訳題と要約を付ける（FR-U-13）。
   // rank が投入する。cron からは呼ばない（briefingId が要る）。
   z.object({
