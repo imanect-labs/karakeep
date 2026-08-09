@@ -15,10 +15,18 @@ import { EmbeddingClientFactory } from "@karakeep/shared/embedding";
 import serverConfig from "@karakeep/shared/config";
 import logger from "@karakeep/shared/logger";
 
+import {
+  isEmbeddingCacheHit,
+  loadArticleCache,
+  putEmbedding,
+  touchArticleCache,
+} from "./articleCache";
 import { chunk, IN_CLAUSE_CHUNK } from "./shared";
 
 export interface EmbedResult {
   embedded: number;
+  /** 共有キャッシュから貰った件数。埋め込みプロバイダを叩いていない。 */
+  shared: number;
   failed: number;
   duplicatesMarked: number;
   clusters: number;
@@ -45,7 +53,13 @@ export async function runEmbed(
     logger.warn(
       `[recommender][embed][${jobId}] no embedding client configured, skipping`,
     );
-    return { embedded: 0, failed: 0, duplicatesMarked: 0, clusters: 0 };
+    return {
+      embedded: 0,
+      shared: 0,
+      failed: 0,
+      duplicatesMarked: 0,
+      clusters: 0,
+    };
   }
 
   const pending = await db.query.recCandidates.findMany({
@@ -68,18 +82,60 @@ export async function runEmbed(
       summary: true,
       contentExcerpt: true,
       urlHash: true,
+      canonicalUrl: true,
       titleHash: true,
       publishedAt: true,
+      // 共有キャッシュへ**書く**かどうかの判定に使う。
+      origin: true,
     },
   });
 
   log(`${pending.length} candidates need an embedding`);
 
   let embedded = 0;
+  let shared = 0;
   let failed = 0;
   const freshlyEmbedded: DedupeItem[] = [];
 
-  for (const batch of chunk(pending, cfg.embedBatchSize)) {
+  // 先に共有キャッシュを引く。同じ収集元を使う別ユーザーが既に埋め込んで
+  // いれば、そのままベクトルを貰える。
+  const now = new Date();
+  const cached = await loadArticleCache(pending.map((c) => c.urlHash));
+  const misses: typeof pending = [];
+  const hitHashes: string[] = [];
+
+  for (const candidate of pending) {
+    const row = cached.get(candidate.urlHash);
+    if (!isEmbeddingCacheHit(row, client.modelId, cfg.embeddingDimensions)) {
+      misses.push(candidate);
+      continue;
+    }
+    await db
+      .update(recCandidates)
+      .set({
+        embedding: row!.embedding,
+        embeddingModelId: row!.embeddingModelId,
+        embeddingStatus: "success",
+      })
+      .where(eq(recCandidates.id, candidate.id));
+    shared++;
+    hitHashes.push(candidate.urlHash);
+    // 重複判定と k-means の入力に入れる。ここで落とすと、共有で埋めた候補
+    // だけ重複マークもクラスタ割り当ても付かない。
+    freshlyEmbedded.push({
+      id: candidate.id,
+      urlHash: candidate.urlHash,
+      titleHash: candidate.titleHash,
+      embedding: deserializeVector(row!.embedding!),
+      publishedAt: candidate.publishedAt,
+    });
+  }
+  await touchArticleCache(hitHashes, now);
+  if (shared > 0) {
+    log(`${shared} embeddings came from the shared article cache`);
+  }
+
+  for (const batch of chunk(misses, cfg.embedBatchSize)) {
     let results;
     try {
       results = await embedDocuments(
@@ -115,15 +171,32 @@ export async function runEmbed(
           .where(eq(recCandidates.id, candidate.id));
         continue;
       }
+      const serialized = serializeVector(result.vector);
       await db
         .update(recCandidates)
         .set({
-          embedding: serializeVector(result.vector),
+          embedding: serialized,
           embeddingModelId: result.modelId,
           embeddingStatus: "success",
         })
         .where(eq(recCandidates.id, candidate.id));
       embedded++;
+      // **書くのは `collected` 由来だけ。** `bootstrap` は本人のブックマーク
+      // なので、`urlHash` の行が在ること自体が「誰かがこの URL を保存した」
+      // という信号になる。読むのは許している（既に誰かの収集結果として
+      // 存在している行なので何も漏れない）。
+      if (candidate.origin === "collected") {
+        await putEmbedding({
+          urlHash: candidate.urlHash,
+          canonicalUrl: candidate.canonicalUrl,
+          embedding: serialized,
+          modelId: result.modelId,
+          // 次元は modelId に含まれないので明示的に持つ。未設定なら
+          // モデルが決めた実寸を記録する。
+          dimensions: cfg.embeddingDimensions ?? result.vector.length,
+          now,
+        });
+      }
       freshlyEmbedded.push({
         id: candidate.id,
         urlHash: candidate.urlHash,
@@ -142,9 +215,9 @@ export async function runEmbed(
   const clusters = await recluster(userId, client.modelId, jobId);
 
   log(
-    `embedded ${embedded}, failed ${failed}, marked ${duplicatesMarked} duplicates, ${clusters} clusters`,
+    `embedded ${embedded} (${shared} shared), failed ${failed}, marked ${duplicatesMarked} duplicates, ${clusters} clusters`,
   );
-  return { embedded, failed, duplicatesMarked, clusters };
+  return { embedded, shared, failed, duplicatesMarked, clusters };
 }
 
 /**

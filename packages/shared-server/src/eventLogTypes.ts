@@ -128,11 +128,15 @@ type EventLogInternal =
       "recommender.new_domains"?: number;
       "recommender.digests_generated"?: number;
       "recommender.digests_failed"?: number;
+      /** 別ユーザーが生成したものを共有キャッシュから貰った件数 (FR-S-06)。 */
+      "recommender.digests_shared"?: number;
     }
   | {
       ["event.name"]: "recommenderEmbedWorker.run";
       "user.id"?: string;
       "recommender.embedded"?: number;
+      /** 共有キャッシュから貰った件数 (FR-S-06)。 */
+      "recommender.embed_shared"?: number;
       "recommender.embed_failed"?: number;
       "recommender.duplicates"?: number;
       "recommender.clusters"?: number;

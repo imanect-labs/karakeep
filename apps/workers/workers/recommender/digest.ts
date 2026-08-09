@@ -15,12 +15,21 @@ import {
 } from "@karakeep/shared/digest";
 import logger from "@karakeep/shared/logger";
 
+import {
+  isDigestCacheHit,
+  loadArticleCache,
+  putDigest,
+  touchArticleCache,
+} from "./articleCache";
 import { DomainThrottle } from "./shared";
 
 export interface DigestResult {
   considered: number;
   generated: number;
+  /** 同じユーザーが以前生成したもの。候補の行にそのまま残っている。 */
   cached: number;
+  /** 別ユーザーが生成したものを共有キャッシュから貰った件数。 */
+  shared: number;
   failed: number;
   skipped: number;
 }
@@ -48,6 +57,7 @@ export async function runDigest(
     considered: 0,
     generated: 0,
     cached: 0,
+    shared: 0,
     failed: 0,
     skipped: 0,
   };
@@ -70,6 +80,8 @@ export async function runDigest(
     .select({
       id: recCandidates.id,
       url: recCandidates.url,
+      urlHash: recCandidates.urlHash,
+      canonicalUrl: recCandidates.canonicalUrl,
       title: recCandidates.title,
       summary: recCandidates.summary,
       contentExcerpt: recCandidates.contentExcerpt,
@@ -91,6 +103,14 @@ export async function runDigest(
 
   const result: DigestResult = { ...empty, considered: rows.length };
   const throttle = new DomainThrottle();
+  const now = new Date();
+
+  // 記事単位の共有キャッシュ（FR-S-06）。別ユーザーが既に訳していれば貰う。
+  // ここは `shown` になった候補だけを見ており、`loadRankableCandidates` が
+  // `origin='collected'` で絞っているので、bootstrap 由来（本人のブックマーク）
+  // が共有キャッシュへ書かれる経路は無い。
+  const cached = await loadArticleCache(rows.map((r) => r.urlHash));
+  const sharedHashes: string[] = [];
 
   for (const row of rows) {
     // モデルを替えたら作り直す。プロンプトを変えたときは
@@ -100,6 +120,24 @@ export async function runDigest(
       row.digestModelId === client.modelId
     ) {
       result.cached++;
+      continue;
+    }
+
+    // 候補側のガードの**後**に置く。同一ユーザーが翌日も同じ記事を選んだ
+    // ときはクエリ 0 のまま抜ける。
+    const hit = cached.get(row.urlHash);
+    if (isDigestCacheHit(hit, client.modelId)) {
+      result.shared++;
+      sharedHashes.push(row.urlHash);
+      await db
+        .update(recCandidates)
+        .set({
+          titleJa: hit!.titleJa,
+          summaryJa: hit!.summaryJa,
+          digestStatus: "success",
+          digestModelId: client.modelId,
+        })
+        .where(eq(recCandidates.id, row.id));
       continue;
     }
 
@@ -129,6 +167,9 @@ export async function runDigest(
     if (!digest) {
       result.failed++;
       // 失敗を記録して次へ。UI は原題と元の要約に落ちる（NFR-09）。
+      //
+      // **共有キャッシュには書かない。** digest の失敗はたいてい本文取得の
+      // 一時的な問題で、全ユーザーに配ると再試行の経路が消える。skipped も同じ。
       await db
         .update(recCandidates)
         .set({ digestStatus: "failure", digestModelId: client.modelId })
@@ -146,10 +187,20 @@ export async function runDigest(
         digestModelId: client.modelId,
       })
       .where(eq(recCandidates.id, row.id));
+    await putDigest({
+      urlHash: row.urlHash,
+      canonicalUrl: row.canonicalUrl,
+      titleJa: digest.titleJa,
+      summaryJa: digest.summaryJa,
+      modelId: client.modelId,
+      now,
+    });
   }
 
+  await touchArticleCache(sharedHashes, now);
+
   log(
-    `generated ${result.generated}, cached ${result.cached}, failed ${result.failed}, skipped ${result.skipped}`,
+    `generated ${result.generated}, cached ${result.cached}, shared ${result.shared}, failed ${result.failed}, skipped ${result.skipped}`,
   );
   return result;
 }

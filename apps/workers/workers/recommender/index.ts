@@ -96,10 +96,14 @@ async function runRecommenderTask(job: DequeuedJob<ZRecommenderTask>) {
       const result = await runDigest(task.userId, task.briefingId, jobId);
       addLogFields<"recommenderWorker.run">({
         "recommender.digests_generated": result.generated,
+        "recommender.digests_shared": result.shared,
         "recommender.digests_failed": result.failed,
       });
       recommenderDigestsCounter.labels("success").inc(result.generated);
       recommenderDigestsCounter.labels("cached").inc(result.cached);
+      // `cached` (同一ユーザー・別日) と分けて取る。混ぜるとユーザー間共有が
+      // 効いているかを測れない。
+      recommenderDigestsCounter.labels("shared").inc(result.shared);
       recommenderDigestsCounter.labels("failure").inc(result.failed);
       recommenderDigestsCounter.labels("skipped").inc(result.skipped);
       return;
@@ -129,11 +133,14 @@ async function runRecommenderEmbedTask(
   const result = await runEmbed(job.data.userId, job.data.candidateIds, job.id);
   addLogFields<"recommenderEmbedWorker.run">({
     "recommender.embedded": result.embedded,
+    "recommender.embed_shared": result.shared,
     "recommender.embed_failed": result.failed,
     "recommender.duplicates": result.duplicatesMarked,
     "recommender.clusters": result.clusters,
   });
   recommenderEmbeddingsCounter.labels("success").inc(result.embedded);
+  // 共有キャッシュから貰った分。埋め込みプロバイダを叩いていない。
+  recommenderEmbeddingsCounter.labels("shared").inc(result.shared);
   recommenderEmbeddingsCounter.labels("failure").inc(result.failed);
 }
 
