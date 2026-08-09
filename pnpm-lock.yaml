@@ -1555,6 +1555,9 @@ importers:
       '@karakeep/db':
         specifier: workspace:*
         version: link:../db
+      '@karakeep/recommender':
+        specifier: workspace:*
+        version: link:../recommender
       '@karakeep/shared':
         specifier: workspace:*
         version: link:../shared
@@ -23818,7 +23821,9 @@ snapshots:
       metro-runtime: 0.84.4
     transitivePeerDependencies:
       - '@babel/core'
+      - bufferutil
       - supports-color
+      - utf-8-validate
 
   '@react-native/normalize-color@2.1.0': {}
 
