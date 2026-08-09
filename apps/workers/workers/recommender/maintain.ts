@@ -6,11 +6,14 @@ import { assignFetchTiers } from "@karakeep/recommender";
 import serverConfig from "@karakeep/shared/config";
 import logger from "@karakeep/shared/logger";
 
+import { purgeArticleCache } from "./articleCache";
 import { chunk, IN_CLAUSE_CHUNK, posteriorMean } from "./shared";
 
 export interface MaintainResult {
   expired: number;
   purged: number;
+  /** 共有キャッシュから落とした記事数。ユーザー横断なので参考値。 */
+  purgedArticles: number;
   retiered: number;
 }
 
@@ -39,12 +42,15 @@ export async function runMaintain(
     .returning({ id: recCandidates.id });
 
   const purged = await purgeOldCandidates(userId, now, cfg.candidatePurgeDays);
+  // 共有キャッシュはユーザーに紐づかないので、誰の maintain で掃除しても同じ。
+  // 冪等なので複数ユーザーで重複して走っても害はない。
+  const purgedArticles = await purgeArticleCache(now, cfg.candidatePurgeDays);
   const retiered = await retierDomains(userId);
 
   logger.info(
-    `[recommender][maintain][${jobId}] expired ${expiredRows.length}, purged ${purged}, retiered ${retiered} domains`,
+    `[recommender][maintain][${jobId}] expired ${expiredRows.length}, purged ${purged} candidates and ${purgedArticles} cached articles, retiered ${retiered} domains`,
   );
-  return { expired: expiredRows.length, purged, retiered };
+  return { expired: expiredRows.length, purged, purgedArticles, retiered };
 }
 
 /**
