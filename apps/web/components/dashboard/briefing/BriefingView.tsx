@@ -39,6 +39,38 @@ export default function BriefingView() {
     api.recommender.listBriefingDates.queryOptions({ limit: 14 }),
   );
 
+  // FR-U-15: 未登録かどうかは Briefing の status とは別の軸。status は
+  // `recBriefings` の行の状態で、アカウントの状態を相乗りさせると別物が混ざる。
+  const enrollment = useQuery(api.recommender.getEnrollment.queryOptions());
+  const enrolled = enrollment.data?.enrolled ?? false;
+  // 登録直後は runEnroll（bootstrap → embed → collect → embed → rank）が
+  // 10 分ほど走る。その間だけ様子を見に行く。
+  const preparing = enrolled && !enrollment.data?.hasEverHadBriefing;
+  const enroll = useMutation(
+    api.recommender.enroll.mutationOptions({
+      onSuccess: () => {
+        void queryClient.invalidateQueries(
+          api.recommender.getEnrollment.pathFilter(),
+        );
+      },
+    }),
+  );
+
+  useEffect(() => {
+    if (!preparing) {
+      return;
+    }
+    const timer = setInterval(() => {
+      void queryClient.invalidateQueries(
+        api.recommender.getEnrollment.pathFilter(),
+      );
+      void queryClient.invalidateQueries(
+        api.recommender.getBriefing.pathFilter(),
+      );
+    }, 15_000);
+    return () => clearInterval(timer);
+  }, [preparing, api, queryClient]);
+
   const briefingId = briefing.data?.id ?? null;
   const invalidate = useCallback(() => {
     void queryClient.invalidateQueries(
@@ -150,7 +182,9 @@ export default function BriefingView() {
     [createBookmark, recordEvent],
   );
 
-  if (briefing.isPending) {
+  // enrollment も待つ。待たないと登録済みのユーザーにも読み込みのたび
+  // 「はじめる」が一瞬出る。
+  if (briefing.isPending || enrollment.isPending) {
     return <p className="text-muted-foreground">読み込んでいます…</p>;
   }
 
@@ -196,14 +230,45 @@ export default function BriefingView() {
         )}
       </header>
 
-      {isEmpty ? (
+      {!enrolled ? (
+        // FR-U-15: 未登録。ここが行き止まりにならないようにする ── 以前は
+        // 「収集元を登録し…」と案内していたが、登録する手段が無かった。
+        <div className="rounded-md border bg-background p-6 text-center">
+          <Sparkles className="mx-auto mb-3 size-6" />
+          <p className="text-lg">毎朝の Briefing を始めましょう</p>
+          <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
+            技術ブログ・論文・Hacker News
+            などの収集元をまとめて登録し、あなたのブックマークから興味を
+            読み取って、毎朝おすすめの記事を並べます。日本語の訳題と要約も
+            付きます。
+          </p>
+          <Button
+            size="lg"
+            className="mt-4"
+            disabled={enroll.isPending}
+            onClick={() => enroll.mutate()}
+          >
+            {enroll.isPending ? "準備しています…" : "はじめる"}
+          </Button>
+        </div>
+      ) : preparing ? (
+        // runEnroll が走っている間。15 秒ごとに様子を見に行く。
+        <div className="rounded-md border bg-background p-6 text-center text-muted-foreground">
+          <Compass className="mx-auto mb-2 size-6 animate-pulse" />
+          <p>準備しています…</p>
+          <p className="mt-1 text-sm">
+            収集元を {enrollment.data?.sourceCount ?? 0} 件登録しました。最初の
+            Briefing まで数分かかります。
+          </p>
+        </div>
+      ) : isEmpty ? (
         // NFR-09: 候補が 1 件も無い日も空の Briefing を出して、その旨を伝える。
         // 黙って何も出さないと、壊れているのか候補が無いのか区別できない。
         <div className="rounded-md border bg-background p-6 text-center text-muted-foreground">
           <Compass className="mx-auto mb-2 size-6" />
           <p>まだ Briefing がありません。</p>
           <p className="mt-1 text-sm">
-            収集元を登録し、夜間の収集ジョブが 1 度走ると表示されます。
+            夜間の収集ジョブが 1 度走ると表示されます。
           </p>
         </div>
       ) : (

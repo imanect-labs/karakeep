@@ -30,6 +30,7 @@ import { runCollect } from "./collect";
 import { runDigest } from "./digest";
 import { runDiscover } from "./discover";
 import { runEmbed } from "./embed";
+import { runEnroll } from "./enroll";
 import { requeueUnobserved, runRewardJoin } from "./feedback";
 import { runMaintain } from "./maintain";
 import { runRank } from "./rank";
@@ -90,6 +91,11 @@ async function runRecommenderTask(job: DequeuedJob<ZRecommenderTask>) {
     }
     case "bootstrap": {
       await runBootstrap(task.userId, task.limit, jobId);
+      return;
+    }
+    case "enroll": {
+      const result = await runEnroll(task.userId, jobId);
+      logger.info(`[recommender][enroll][${jobId}] ${JSON.stringify(result)}`);
       return;
     }
     case "digest": {
@@ -212,7 +218,8 @@ export class RecommenderEmbedWorker {
 function scheduleDaily(
   expression: string,
   // digest は rank が briefingId 付きで投入するので、cron からは呼べない。
-  type: Exclude<ZRecommenderTask["type"], "bootstrap" | "digest">,
+  // bootstrap と enroll は登録時に 1 度だけ走る初期化なので同じく除く。
+  type: Exclude<ZRecommenderTask["type"], "bootstrap" | "digest" | "enroll">,
 ) {
   return cron.schedule(
     expression,

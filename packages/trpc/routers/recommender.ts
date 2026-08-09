@@ -9,7 +9,10 @@ import {
   recDomains,
   recFeedbackEvents,
   recImpressions,
+  recSources,
 } from "@karakeep/db/schema";
+import { SEED_SOURCES } from "@karakeep/recommender";
+import { RecommenderQueue } from "@karakeep/shared-server";
 
 import type { AuthedContext } from "../index";
 import { createScopedAuthedProcedure, router } from "../index";
@@ -188,6 +191,89 @@ export const recommenderAppRouter = router({
           events: events.get(row.impressionId) ?? [],
         })),
       };
+    }),
+
+  /**
+   * 推薦を有効にしているか（FR-U-15）。
+   *
+   * 判定は `recommenderUserIds()`（`apps/workers/.../shared.ts`）と**同じ
+   * 述語**にする。ずれると UI が「登録済み」と言っているのに cron が
+   * そのユーザーを列挙しない、という無症状の状態が生まれる。
+   */
+  getEnrollment: recommenderProcedure
+    .output(
+      z.object({
+        enrolled: z.boolean(),
+        sourceCount: z.number(),
+        /** 一度でも Briefing が生成されたか。準備中の表示を出すかの判断。 */
+        hasEverHadBriefing: z.boolean(),
+      }),
+    )
+    .query(async ({ ctx }) => {
+      const [sources] = await ctx.db
+        .select({ count: sql<number>`count(*)` })
+        .from(recSources)
+        .where(eq(recSources.userId, ctx.user.id));
+      const [briefings] = await ctx.db
+        .select({ count: sql<number>`count(*)` })
+        .from(recBriefings)
+        .where(eq(recBriefings.userId, ctx.user.id));
+      const sourceCount = sources?.count ?? 0;
+      return {
+        enrolled: sourceCount > 0,
+        sourceCount,
+        hasEverHadBriefing: (briefings?.count ?? 0) > 0,
+      };
+    }),
+
+  /**
+   * 推薦を自分で有効にする（FR-U-15）。
+   *
+   * 共通のシード収集元を登録し、初回パイプラインを 1 ジョブで投入する。
+   * 冪等 ── 既に収集元を持っているユーザーには何もしない。
+   */
+  enroll: recommenderProcedure
+    .output(
+      z.object({
+        /** false は「既に登録済みで何もしなかった」。エラーではない。 */
+        enrolled: z.boolean(),
+        sourcesCreated: z.number(),
+      }),
+    )
+    .mutation(async ({ ctx }) => {
+      const existing = await ctx.db
+        .select({ name: recSources.name })
+        .from(recSources)
+        .where(eq(recSources.userId, ctx.user.id));
+      if (existing.length > 0) {
+        return { enrolled: false, sourcesCreated: 0 };
+      }
+
+      // 同期的に入れる。98 行の insert は数ミリ秒で、ここでやると次の
+      // refetch で UI がボタン → 準備中へ一度で切り替わる。ワーカーに
+      // 回すと、その間ボタンが押せる状態のまま残る。
+      await ctx.db.insert(recSources).values(
+        SEED_SOURCES.map((source) => ({
+          userId: ctx.user.id,
+          // domainId は付けない。供給層は全員共通で、議席にも試用枠にも
+          // 載せない（FR-C-08）。
+          name: source.name,
+          kind: source.kind,
+          config: source.config as Record<string, unknown>,
+          profileIndependent: source.profileIndependent ?? false,
+        })),
+      );
+
+      await RecommenderQueue.enqueue(
+        { type: "enroll", userId: ctx.user.id },
+        {
+          groupId: ctx.user.id,
+          // 日付を含めない。走っている間の二度押しを握り潰す。
+          idempotencyKey: `rec:enroll:${ctx.user.id}`,
+        },
+      );
+
+      return { enrolled: true, sourcesCreated: SEED_SOURCES.length };
     }),
 
   /** 過去の Briefing を日付で遡る（FR-U-07）。 */

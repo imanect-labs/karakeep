@@ -120,6 +120,13 @@ export function defaultBeforeEach(seedDB = true) {
         RuleEngineQueue: {
           enqueue: vi.fn(),
         },
+        // モックしないと `enroll` の enqueue が実 queue.db を開きにいく。
+        RecommenderQueue: {
+          enqueue: vi.fn(),
+        },
+        RecommenderEmbedQueue: {
+          enqueue: vi.fn(),
+        },
         triggerSearchReindex: vi.fn(),
       };
     });

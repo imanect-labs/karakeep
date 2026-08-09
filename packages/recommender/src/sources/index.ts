@@ -5,6 +5,7 @@ import { rssAdapter } from "./rss";
 import type { RecSourceKind, SourceAdapter } from "./types";
 
 export * from "./types";
+export * from "./seed";
 export * from "./rss";
 export * from "./hn";
 export * from "./arxiv";
