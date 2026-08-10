@@ -19,11 +19,12 @@ import type { RecSourceKind } from "./types";
  * ドメインは `collect` の `ensureDomains` が `discovered` として作り、バンディットが
  * 独立に育てる ── 供給（共通）と評価（個人）の分離が既存の設計。
  *
- * **この一覧は 2026-08-08〜09 に手作業で本番へ投入したものと同じ。**
- * すべて登録前に実際に取得して 200 と item 数を確認済み。取得できなかったもの
- * （はてブのサブカテゴリは `?category=` が無視されて親と完全一致、
- * Uber / LinkedIn / Box は feed 無し、Quora は robots で拒否、Yelp は 403）は
- * 外してある。経緯は giken-ops の `docs/karakeep-recommender-sources.md`。
+ * **全件、登録前に実際に取得して 200 と item 数を確認してある。** 骨格の 98 件は
+ * 2026-08-08〜09 に手作業で本番へ投入したものと同一（はてブのサブカテゴリは
+ * `?category=` が無視されて親と完全一致、Uber / LinkedIn / Box は feed 無し、
+ * Quora は robots で拒否、Yelp は 403 だったので外してある）。
+ * 2026-08-10 に分野の穴を埋める 60 件を足して 158 件（下の #120 のブロック）。
+ * 経緯は giken-ops の `docs/karakeep-recommender-sources.md`。
  *
  * ⚠️ `zenn.dev` / `qiita.com` は `BLOCKED_SUFFIXES`（`domain/quality.ts`）に
  * 入っているが、`isBlockedDomain` は `screenDomain` のドメイン発見経路にしか
@@ -76,6 +77,51 @@ export const SEED_SOURCES: readonly SeedSource[] = [
     name: "arXiv cs.IR/LG/CL/DC",
     kind: "arxiv",
     config: { categories: ["cs.IR", "cs.LG", "cs.CL", "cs.DC"] },
+  },
+  // 分野を問わない供給の厚み。`PROFILE_INDEPENDENT_FLOOR = 0.2` は**候補数**に
+  // 対する床なので、独立ソースが 3 件しかないと 800 件 × 20% = 160 件を賄えず
+  // 床が満たせないまま静かに縮む。ここを厚くしておくと `random` アームの引きも
+  // 広がる。
+  {
+    name: "Lobsters",
+    kind: "rss",
+    config: { feedUrl: "https://lobste.rs/rss" },
+    profileIndependent: true,
+  },
+  {
+    name: "InfoQ",
+    kind: "rss",
+    config: { feedUrl: "https://feed.infoq.com/" },
+    profileIndependent: true,
+  },
+  {
+    name: "The Changelog",
+    kind: "rss",
+    config: { feedUrl: "https://changelog.com/feed" },
+    profileIndependent: true,
+  },
+  {
+    name: "Ars Technica",
+    kind: "rss",
+    config: {
+      feedUrl: "https://feeds.arstechnica.com/arstechnica/technology-lab",
+    },
+    profileIndependent: true,
+  },
+  {
+    name: "The Register",
+    kind: "rss",
+    config: { feedUrl: "https://www.theregister.com/headlines.atom" },
+    profileIndependent: true,
+  },
+  // 日本語側の分野横断。Zenn は下の「プロダクト / 基盤」にあるが、あちらは
+  // 全記事フィードで profileIndependent ではない（質のばらつきが大きい）。
+  // Qiita の人気記事は選抜が入るぶん床の材料として使える。
+  {
+    name: "Qiita 人気記事",
+    kind: "rss",
+    config: { feedUrl: "https://qiita.com/popular-items/feed" },
+    profileIndependent: true,
   },
 
   // --- 個人 / 深い技術 ----------------------------------------------------
@@ -149,6 +195,41 @@ export const SEED_SOURCES: readonly SeedSource[] = [
     config: {
       feedUrl: "https://googleprojectzero.blogspot.com/feeds/posts/default",
     },
+  },
+  {
+    name: "Google Security Blog",
+    kind: "rss",
+    config: { feedUrl: "https://security.googleblog.com/feeds/posts/default" },
+  },
+  {
+    name: "PortSwigger Research",
+    kind: "rss",
+    config: { feedUrl: "https://portswigger.net/research/rss" },
+  },
+  {
+    name: "GitHub Security Lab",
+    kind: "rss",
+    config: { feedUrl: "https://github.blog/tag/github-security-lab/feed/" },
+  },
+  {
+    name: "Snyk Blog",
+    kind: "rss",
+    config: { feedUrl: "https://snyk.io/blog/feed/" },
+  },
+  {
+    name: "Krebs on Security",
+    kind: "rss",
+    config: { feedUrl: "https://krebsonsecurity.com/feed/" },
+  },
+  {
+    name: "Schneier on Security",
+    kind: "rss",
+    config: { feedUrl: "https://www.schneier.com/feed/atom/" },
+  },
+  {
+    name: "JPCERT/CC",
+    kind: "rss",
+    config: { feedUrl: "https://blogs.jpcert.or.jp/ja/atom.xml" },
   },
 
   // --- プロダクト / 基盤 --------------------------------------------------
@@ -564,5 +645,290 @@ export const SEED_SOURCES: readonly SeedSource[] = [
     name: "Ubie テックブログ",
     kind: "rss",
     config: { feedUrl: "https://zenn.dev/p/ubie_dev/feed" },
+  },
+
+  // =========================================================================
+  // ここから下は「分野の穴を埋める」ための追加（giken-ops #120）。
+  //
+  // 上の一覧は 2026-08-08 時点のライブラリ 94 ブックマークのタグ集計
+  // （AI エージェント / Kubernetes / LLM / PostgreSQL / RAG …）から逆算して
+  // 選ばれていて、**AI・分散システム・インフラが濃く、フロントエンド・
+  // モバイル・データ基盤・セキュリティ・QA が事実上ゼロ**だった。
+  // 1 人で使うぶんには最適だが、それが全新規ユーザーの初期値になるのは別の話。
+  //
+  // **解き方として「登録時に分野を選ばせる」は採らなかった。** 選ばなかった
+  // 分野の収集元が入らない ＝ 供給層をユーザーごとに削ることになり、この
+  // ファイル冒頭の方針と真逆になる。ランキングで取り消せないフィルタを
+  // 入り口に置くと、興味が変わっても届かない。
+  //
+  // 代わりに**共通リストそのものを分野横断へ広げる**。供給は全員に厚く配り、
+  // 誰に何を出すかはランキング層（プロフィール類似 + バンディット）が決める。
+  // 「フロントエンドの記事が要らない人」には出なくなるだけで、**将来その人が
+  // フロントエンドを触り始めたら勝手に出るようになる**のが、この形の利点。
+  //
+  // 追加分も全件、登録前に実際に取得して 200 と item 数を確認済み。落ちたもの:
+  //   403 … Dev.to / Reddit r/programming / NCC Group / Real-Time Rendering
+  //   404 … ClickHouse / Confluent / Snowflake / Jepsen / Honeycomb /
+  //          incident.io / Netdata / 2ality / PHP Watch
+  //   200 だが item 0 … Swift.org（Atom を返すが本文が空）
+  // =========================================================================
+
+  // --- フロントエンド / Web プラットフォーム --------------------------------
+  // ブラウザベンダの一次情報を軸にする。仕様と実装の話は寿命が長く、
+  // フレームワークの流行より腐りにくい。
+  {
+    name: "web.dev",
+    kind: "rss",
+    config: { feedUrl: "https://web.dev/static/blog/feed.xml" },
+  },
+  {
+    name: "Chrome for Developers",
+    kind: "rss",
+    config: { feedUrl: "https://developer.chrome.com/static/blog/feed.xml" },
+  },
+  {
+    name: "WebKit Blog",
+    kind: "rss",
+    config: { feedUrl: "https://webkit.org/feed/" },
+  },
+  {
+    name: "Mozilla Hacks",
+    kind: "rss",
+    config: { feedUrl: "https://hacks.mozilla.org/feed/" },
+  },
+  {
+    name: "V8 Blog",
+    kind: "rss",
+    config: { feedUrl: "https://v8.dev/blog.atom" },
+  },
+  {
+    name: "React Blog",
+    kind: "rss",
+    config: { feedUrl: "https://react.dev/rss.xml" },
+  },
+  {
+    name: "Vue.js Blog",
+    kind: "rss",
+    config: { feedUrl: "https://blog.vuejs.org/feed.rss" },
+  },
+  {
+    name: "Svelte Blog",
+    kind: "rss",
+    config: { feedUrl: "https://svelte.dev/blog/rss.xml" },
+  },
+  {
+    name: "Next.js Blog",
+    kind: "rss",
+    config: { feedUrl: "https://nextjs.org/feed.xml" },
+  },
+  {
+    name: "Astro Blog",
+    kind: "rss",
+    config: { feedUrl: "https://astro.build/rss.xml" },
+  },
+  {
+    name: "Deno Blog",
+    kind: "rss",
+    config: { feedUrl: "https://deno.com/feed" },
+  },
+  {
+    name: "Bun Blog",
+    kind: "rss",
+    config: { feedUrl: "https://bun.sh/rss.xml" },
+  },
+  {
+    name: "TypeScript DevBlog",
+    kind: "rss",
+    config: { feedUrl: "https://devblogs.microsoft.com/typescript/feed/" },
+  },
+  {
+    name: "CSS-Tricks",
+    kind: "rss",
+    config: { feedUrl: "https://css-tricks.com/feed/" },
+  },
+  {
+    name: "Smashing Magazine",
+    kind: "rss",
+    config: { feedUrl: "https://www.smashingmagazine.com/feed/" },
+  },
+  {
+    name: "A List Apart",
+    kind: "rss",
+    config: { feedUrl: "https://alistapart.com/main/feed/" },
+  },
+  {
+    name: "Josh Comeau",
+    kind: "rss",
+    config: { feedUrl: "https://www.joshwcomeau.com/rss.xml" },
+  },
+  {
+    name: "Kent C. Dodds",
+    kind: "rss",
+    config: { feedUrl: "https://kentcdodds.com/blog/rss.xml" },
+  },
+
+  // --- モバイル -------------------------------------------------------------
+  {
+    name: "Android Developers Blog",
+    kind: "rss",
+    config: {
+      feedUrl: "https://android-developers.googleblog.com/feeds/posts/default",
+    },
+  },
+  {
+    name: "Kotlin Blog",
+    kind: "rss",
+    // `/feed/` は 403。Atom 側は通る。
+    config: { feedUrl: "https://blog.jetbrains.com/kotlin/feed/atom/" },
+  },
+  {
+    name: "Swift by Sundell",
+    kind: "rss",
+    config: { feedUrl: "https://swiftbysundell.com/rss" },
+  },
+  {
+    name: "NSHipster",
+    kind: "rss",
+    config: { feedUrl: "https://nshipster.com/feed.xml" },
+  },
+  {
+    name: "objc.io",
+    kind: "rss",
+    config: { feedUrl: "https://www.objc.io/feed.xml" },
+  },
+  {
+    name: "iOS Dev Weekly",
+    kind: "rss",
+    config: { feedUrl: "https://iosdevweekly.com/issues.rss" },
+  },
+  {
+    name: "Flutter",
+    kind: "rss",
+    config: { feedUrl: "https://medium.com/feed/flutter" },
+  },
+
+  // --- 言語 / ランタイム ----------------------------------------------------
+  // Rust は上の「プロダクト / 基盤」に既にある。
+  {
+    name: "Go Blog",
+    kind: "rss",
+    config: { feedUrl: "https://go.dev/blog/feed.atom" },
+  },
+  {
+    name: "Python Insider",
+    kind: "rss",
+    config: { feedUrl: "https://blog.python.org/feeds/posts/default" },
+  },
+  {
+    name: "Ruby News",
+    kind: "rss",
+    config: { feedUrl: "https://www.ruby-lang.org/en/feeds/news.rss" },
+  },
+  {
+    name: "Inside Java",
+    kind: "rss",
+    config: { feedUrl: "https://inside.java/feed.xml" },
+  },
+  {
+    name: ".NET Blog",
+    kind: "rss",
+    config: { feedUrl: "https://devblogs.microsoft.com/dotnet/feed/" },
+  },
+  {
+    name: "Elixir Blog",
+    kind: "rss",
+    config: { feedUrl: "https://elixir-lang.org/atom.xml" },
+  },
+  {
+    name: "Zig News",
+    kind: "rss",
+    config: { feedUrl: "https://ziglang.org/news/index.xml" },
+  },
+
+  // --- データ基盤 -----------------------------------------------------------
+  // DuckDB / PostgreSQL / PlanetScale は上にあるが、いずれも DB 単体の話。
+  // パイプライン・ウェアハウス側がまるごと無かった。
+  {
+    name: "Databricks Blog",
+    kind: "rss",
+    config: { feedUrl: "https://www.databricks.com/feed" },
+  },
+  {
+    name: "dbt Labs Blog",
+    kind: "rss",
+    config: { feedUrl: "https://www.getdbt.com/blog/rss.xml" },
+  },
+  {
+    name: "Materialize Blog",
+    kind: "rss",
+    config: { feedUrl: "https://materialize.com/rss.xml" },
+  },
+  {
+    name: "Data Engineering Weekly",
+    kind: "rss",
+    config: { feedUrl: "https://www.dataengineeringweekly.com/feed" },
+  },
+
+  // --- SRE / 可観測性 -------------------------------------------------------
+  {
+    name: "Grafana Blog",
+    kind: "rss",
+    config: { feedUrl: "https://grafana.com/blog/index.xml" },
+  },
+  {
+    name: "charity.wtf",
+    kind: "rss",
+    config: { feedUrl: "https://charity.wtf/feed/" },
+  },
+
+  // --- 機械学習 / AI --------------------------------------------------------
+  // arXiv と Google Research はあったが、実装寄り・解説寄りの一次情報が薄い。
+  {
+    name: "Hugging Face Blog",
+    kind: "rss",
+    config: { feedUrl: "https://huggingface.co/blog/feed.xml" },
+  },
+  {
+    name: "PyTorch Blog",
+    kind: "rss",
+    config: { feedUrl: "https://pytorch.org/blog/feed.xml" },
+  },
+  {
+    name: "Google DeepMind Blog",
+    kind: "rss",
+    config: { feedUrl: "https://deepmind.google/blog/rss.xml" },
+  },
+  {
+    name: "BAIR Blog",
+    kind: "rss",
+    config: { feedUrl: "https://bair.berkeley.edu/blog/feed.xml" },
+  },
+  {
+    name: "Lil'Log",
+    kind: "rss",
+    config: { feedUrl: "https://lilianweng.github.io/index.xml" },
+  },
+
+  // --- デザイン / プロダクト / QA -------------------------------------------
+  // エンジニアだけが使うものではないので、コードを書かない話も供給する。
+  {
+    name: "Nielsen Norman Group",
+    kind: "rss",
+    config: { feedUrl: "https://www.nngroup.com/feed/rss/" },
+  },
+  {
+    name: "Lenny's Newsletter",
+    kind: "rss",
+    config: { feedUrl: "https://www.lennysnewsletter.com/feed" },
+  },
+  {
+    name: "SVPG",
+    kind: "rss",
+    config: { feedUrl: "https://www.svpg.com/articles/rss" },
+  },
+  {
+    name: "Google Testing Blog",
+    kind: "rss",
+    config: { feedUrl: "https://testing.googleblog.com/feeds/posts/default" },
   },
 ];

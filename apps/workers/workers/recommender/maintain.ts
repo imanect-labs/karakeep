@@ -1,8 +1,13 @@
 import { and, eq, inArray, lt, notInArray, sql } from "drizzle-orm";
 
 import { db } from "@karakeep/db";
-import { recCandidates, recDomains, recImpressions } from "@karakeep/db/schema";
-import { assignFetchTiers } from "@karakeep/recommender";
+import {
+  recCandidates,
+  recDomains,
+  recImpressions,
+  recSources,
+} from "@karakeep/db/schema";
+import { assignFetchTiers, SEED_SOURCES } from "@karakeep/recommender";
 import serverConfig from "@karakeep/shared/config";
 import logger from "@karakeep/shared/logger";
 
@@ -15,6 +20,8 @@ export interface MaintainResult {
   /** 共有キャッシュから落とした記事数。ユーザー横断なので参考値。 */
   purgedArticles: number;
   retiered: number;
+  /** 追加された共通シード収集元の数（FR-C-08b）。 */
+  syncedSources: number;
 }
 
 /**
@@ -46,11 +53,81 @@ export async function runMaintain(
   // 冪等なので複数ユーザーで重複して走っても害はない。
   const purgedArticles = await purgeArticleCache(now, cfg.candidatePurgeDays);
   const retiered = await retierDomains(userId);
+  const syncedSources = await syncSeedSources(userId);
 
   logger.info(
-    `[recommender][maintain][${jobId}] expired ${expiredRows.length}, purged ${purged} candidates and ${purgedArticles} cached articles, retiered ${retiered} domains`,
+    `[recommender][maintain][${jobId}] expired ${expiredRows.length}, purged ${purged} candidates and ${purgedArticles} cached articles, retiered ${retiered} domains, synced ${syncedSources} seed sources`,
   );
-  return { expired: expiredRows.length, purged, purgedArticles, retiered };
+  return {
+    expired: expiredRows.length,
+    purged,
+    purgedArticles,
+    retiered,
+    syncedSources,
+  };
+}
+
+/**
+ * 共通シード（`SEED_SOURCES`）に足りない収集元を配る（FR-C-08b）。
+ *
+ * **なぜ maintain でやるか。** シードを配るのは `enroll` だけで、そちらは
+ * 「`recSources` が 1 件でもあれば何もしない」。つまり**一度登録した人には
+ * 一覧を増やしても永久に届かない**。フィードは死ぬし分野の穴も後から見つかる
+ * ので、一覧は今後も変わる。そのたびに全ユーザーへ手作業で流し込むのは、
+ * 忘れた瞬間に「人によって供給が違う」状態を作る ── 供給層は全員共通、という
+ * 前提そのものが崩れる。
+ *
+ * **`name` で突き合わせて、無いものだけ足す。** 既にある行には触らない。
+ * とくに `enabled = false`（FR-C-07 の連続失敗で止められた収集元）は
+ * そのまま止まったままにする ── ここで復活させると、壊れた feed を毎日
+ * 叩き続けることになる。
+ *
+ * **消しはしない。** 一覧から外した収集元が各自の手元に残るが、それは
+ * 「供給層は削らない」方針と整合する。害があるものは連続失敗で自然に止まる。
+ */
+async function syncSeedSources(userId: string): Promise<number> {
+  const existing = await db
+    .select({ name: recSources.name })
+    .from(recSources)
+    .where(eq(recSources.userId, userId));
+
+  const missing = selectMissingSeedSources(existing.map((row) => row.name));
+  if (missing.length === 0) {
+    return 0;
+  }
+
+  for (const batch of chunk(missing, IN_CLAUSE_CHUNK)) {
+    await db.insert(recSources).values(
+      batch.map((source) => ({
+        userId,
+        // domainId は付けない（FR-C-08）。enroll と同じ形で入れる。
+        name: source.name,
+        kind: source.kind,
+        config: source.config as Record<string, unknown>,
+        profileIndependent: source.profileIndependent ?? false,
+      })),
+    );
+  }
+  return missing.length;
+}
+
+/**
+ * 既に持っている収集元名から、配り直すべきシードを選ぶ。
+ *
+ * 判定だけ切り出してある ── ここが壊れても例外にはならず、「一部の人にだけ
+ * 収集元が増えない」という気づきにくい形で出るため。
+ */
+export function selectMissingSeedSources(
+  existingNames: readonly string[],
+): (typeof SEED_SOURCES)[number][] {
+  // 0 件 = そもそも未登録。maintain は `recommenderUserIds()`（収集元を持つ
+  // 人）にしか投入されないので通常あり得ないが、ここで配ると「画面から自分で
+  // 始める」という有効化の設計を裏口から破ることになるので、明示的に弾く。
+  if (existingNames.length === 0) {
+    return [];
+  }
+  const have = new Set(existingNames);
+  return SEED_SOURCES.filter((source) => !have.has(source.name));
 }
 
 /**

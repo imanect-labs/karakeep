@@ -249,9 +249,13 @@ export const recommenderAppRouter = router({
         return { enrolled: false, sourcesCreated: 0 };
       }
 
-      // 同期的に入れる。98 行の insert は数ミリ秒で、ここでやると次の
+      // 同期的に入れる。150 行あまりの insert は数ミリ秒で、ここでやると次の
       // refetch で UI がボタン → 準備中へ一度で切り替わる。ワーカーに
       // 回すと、その間ボタンが押せる状態のまま残る。
+      //
+      // ここは**初回だけ**。一覧が増えたぶんを既存ユーザーへ配るのは
+      // `runMaintain` の `syncSeedSources`（この mutation は上で早期 return
+      // するので届かない）。
       await ctx.db.insert(recSources).values(
         SEED_SOURCES.map((source) => ({
           userId: ctx.user.id,

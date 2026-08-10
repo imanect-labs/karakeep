@@ -96,6 +96,15 @@ async function runRecommenderTask(job: DequeuedJob<ZRecommenderTask>) {
     case "enroll": {
       const result = await runEnroll(task.userId, jobId);
       logger.info(`[recommender][enroll][${jobId}] ${JSON.stringify(result)}`);
+      // enroll は `runEmbed` を直接呼ぶので、`embed` タスクのランナーを通らない。
+      // ここで積まないと**初回登録ぶんの埋め込みがメトリクスに一切出ない** ──
+      // 2 人目を入れた 2026-08-10 に `shared` が 0 のままに見えて、共有キャッシュ
+      // が効いていないと誤読しかけた（実際は 57 件ヒットしていた）。
+      recommenderEmbeddingsCounter.labels("success").inc(result.embedded);
+      recommenderEmbeddingsCounter.labels("shared").inc(result.embeddedShared);
+      recommenderEmbeddingsCounter
+        .labels("failure")
+        .inc(result.failedEmbeddings);
       return;
     }
     case "digest": {

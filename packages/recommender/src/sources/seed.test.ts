@@ -48,13 +48,41 @@ describe("SEED_SOURCES", () => {
     // FR-C-03 の床は取り込み件数に対する 20% だが、供給できる非依存ソースが
     // 無いと `allocateIntake` の reserved が 0 になり床が死ぬ。`random` アームも
     // 同じプールから引くので、そちらも枯れる。
+    //
+    // **件数の下限を置く理由。** 床は 800 × 0.2 = 160 **候補**で、ソース数では
+    // ない。1 ソースが 1 日に出す記事は多くて数十件なので、3 件では 160 に
+    // 届かず床が黙って縮む（`min(reserved, independentAvailable)`）。
+    // 6 件あれば平常時は満たせる。減らすときはこの算数をやり直すこと。
     const independent = SEED_SOURCES.filter((s) => s.profileIndependent);
-    expect(independent.length).toBeGreaterThan(0);
+    expect(independent.length).toBeGreaterThanOrEqual(6);
     expect(PROFILE_INDEPENDENT_FLOOR).toBe(0.2);
   });
 
   test("is large enough to fill a briefing on day one", () => {
     // 少なすぎると初日の候補プールが薄くなり、多様性の上限がそこで決まる。
     expect(SEED_SOURCES.length).toBeGreaterThanOrEqual(50);
+  });
+
+  test("no single host dominates the supply", () => {
+    // giken-ops #120 の再発防止。**供給層は全員共通で削らない**方針なので、
+    // 偏りはランキングでは取り消せず、ここでしか直せない。特定のホストが
+    // 大半を占めると、そのホストが落ちた日に供給がまとめて消えるリスクも付く。
+    //
+    // Zenn の Publication のように、同じホストで書き手が違うものは意図的に
+    // 別ソースにしてある（`zenn.dev` が最多になるのはそのため）。上限は
+    // その運用が続けられる程度に緩く取る。
+    const hosts = new Map<string, number>();
+    for (const source of SEED_SOURCES) {
+      if (source.kind !== "rss") {
+        continue;
+      }
+      const { hostname } = new URL((source.config as RssSourceConfig).feedUrl);
+      hosts.set(hostname, (hosts.get(hostname) ?? 0) + 1);
+    }
+    const [topHost, topCount] = [...hosts].sort((a, b) => b[1] - a[1])[0];
+    expect(
+      topCount / SEED_SOURCES.length,
+      `${topHost} が ${topCount}/${SEED_SOURCES.length} 件を占めている`,
+    ).toBeLessThan(0.15);
   });
 });
