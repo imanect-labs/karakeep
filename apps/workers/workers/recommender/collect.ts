@@ -60,6 +60,16 @@ export interface CollectResult {
   newDomains: number;
 }
 
+export interface CollectOptions {
+  /**
+   * 取り込んだ候補の埋め込みを `RecommenderEmbedQueue` へ投入するか。
+   *
+   * **呼び出し側が続けて自分で `runEmbed` を回すなら `false` にする。**
+   * 既定は `true`（日次 cron の経路）。
+   */
+  enqueueEmbed?: boolean;
+}
+
 /**
  * 候補収集（FR-C-01〜07）。
  *
@@ -69,6 +79,7 @@ export interface CollectResult {
 export async function runCollect(
   userId: string,
   jobId: string,
+  { enqueueEmbed = true }: CollectOptions = {},
 ): Promise<CollectResult> {
   const cfg = serverConfig.recommender;
   const now = new Date();
@@ -152,7 +163,13 @@ export async function runCollect(
   await recordAggregatorDiscoveries(fetched, deduped, domainIds, now);
   await touchDomains(fetched, now);
 
-  if (inserted > 0) {
+  // 呼び出し側が自分で `runEmbed` を回すなら投入しない。**投入すると二重に
+  // 埋め込む。** `runEmbed` は `embeddingStatus='pending'` を掴むだけで
+  // 取り合いの調停をしないので、2 つのランナーがほぼ同時に走ると同じ候補を
+  // 両方が処理する。2026-08-10 の enroll 実測では、直接呼び出しが 793 件を
+  // 掴んだ 4 秒後にキュー側が残り 704 件を掴み、**704 件を二重に埋め込んで
+  // いた**（9 分のうちおよそ半分が無駄）。
+  if (inserted > 0 && enqueueEmbed) {
     await RecommenderEmbedQueue.enqueue({ userId }, { groupId: userId });
   }
 

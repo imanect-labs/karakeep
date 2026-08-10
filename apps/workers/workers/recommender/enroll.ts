@@ -9,6 +9,9 @@ export interface EnrollResult {
   bootstrapped: number;
   collected: number;
   embedded: number;
+  /** 共有キャッシュから貰えた埋め込み。メトリクスの `shared` に積む。 */
+  embeddedShared: number;
+  failedEmbeddings: number;
   briefingSize: number;
 }
 
@@ -51,7 +54,11 @@ export async function runEnroll(
   const libraryEmbed = await runEmbed(userId, undefined, jobId);
 
   // ③ シード収集元から候補を取り込む。
-  const collect = await runCollect(userId, jobId);
+  //    `enqueueEmbed: false` が要る。既定のまま投入すると、④ の直接呼び出しと
+  //    キュー側のランナーが**同じ pending 候補を取り合って二重に埋め込む**。
+  //    `runEmbed` は行を掴む調停をしないので、後から `findMany` した側は
+  //    先行分が `success` になるまでの残りをそのまま拾ってしまう。
+  const collect = await runCollect(userId, jobId, { enqueueEmbed: false });
   log(
     `collect: ${collect.sourcesTried} sources, fetched ${collect.fetched}, inserted ${collect.inserted}`,
   );
@@ -67,6 +74,8 @@ export async function runEnroll(
     bootstrapped: bootstrap.imported,
     collected: collect.inserted,
     embedded: libraryEmbed.embedded + candidateEmbed.embedded,
+    embeddedShared: libraryEmbed.shared + candidateEmbed.shared,
+    failedEmbeddings: libraryEmbed.failed + candidateEmbed.failed,
     briefingSize: rank.shown,
   };
 }
