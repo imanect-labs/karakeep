@@ -1,4 +1,5 @@
-import { inArray, sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
+import { and, inArray, isNull, lt, or } from "drizzle-orm";
 
 import { db } from "@karakeep/db";
 import { recArticleCache } from "@karakeep/db/schema";
@@ -174,6 +175,30 @@ export async function touchArticleCache(
 }
 
 /**
+ * パージ対象の絞り込み。
+ *
+ * **`sql` テンプレートに `Date` を差し込んではいけない。** テンプレートで
+ * 補間した値は列の `mode: "timestamp"` を通らず、`Date` がそのまま
+ * better-sqlite3 へ渡って `SQLite3 can only bind numbers, strings, bigints,
+ * buffers, and null` で落ちる。当初 `coalesce(lastUsedAt, createdAt) < cutoff`
+ * と書いていて、**`maintain` が丸ごと落ちていた**（cron が一度も発火して
+ * いなかったので 2026-08-10 まで露見しなかった）。
+ *
+ * `lt()` を使えば列のマッパーが効く。`coalesce` の代わりに `or` で分けるのは、
+ * SQL の `NULL < x` が NULL になり `lt(lastUsedAt, …)` だけでは
+ * `lastUsedAt IS NULL` の行が残ってしまうため。
+ */
+export function buildArticleCachePurgeFilter(cutoff: Date): SQL | undefined {
+  return or(
+    lt(recArticleCache.lastUsedAt, cutoff),
+    and(
+      isNull(recArticleCache.lastUsedAt),
+      lt(recArticleCache.createdAt, cutoff),
+    ),
+  );
+}
+
+/**
  * 誰も参照しなくなった記事を落とす（`maintain` から呼ぶ）。
  *
  * 無いと 1 日 5MB 程度で無限に伸びる。`lastUsedAt` は生成時にも入るので、
@@ -186,9 +211,7 @@ export async function purgeArticleCache(
   const cutoff = new Date(now.getTime() - purgeDays * 86_400_000);
   const rows = await db
     .delete(recArticleCache)
-    .where(
-      sql`coalesce(${recArticleCache.lastUsedAt}, ${recArticleCache.createdAt}) < ${cutoff}`,
-    )
+    .where(buildArticleCachePurgeFilter(cutoff))
     .returning({ urlHash: recArticleCache.urlHash });
   return rows.length;
 }
