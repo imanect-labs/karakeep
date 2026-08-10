@@ -1,7 +1,12 @@
+import { SQLiteSyncDialect } from "drizzle-orm/sqlite-core";
 import { describe, expect, test } from "vitest";
 
 import type { ArticleCacheRow } from "./articleCache";
-import { isDigestCacheHit, isEmbeddingCacheHit } from "./articleCache";
+import {
+  buildArticleCachePurgeFilter,
+  isDigestCacheHit,
+  isEmbeddingCacheHit,
+} from "./articleCache";
 
 function row(overrides: Partial<ArticleCacheRow> = {}): ArticleCacheRow {
   return {
@@ -109,5 +114,39 @@ describe("isEmbeddingCacheHit", () => {
     expect(
       isEmbeddingCacheHit(undefined, "ollama/embeddinggemma:300m", 768),
     ).toBe(false);
+  });
+});
+
+describe("buildArticleCachePurgeFilter", () => {
+  /**
+   * **ここが壊れると `maintain` が丸ごと落ちる。** 実際 2026-08-10 まで
+   * `sql` テンプレートに `Date` を差し込んでいて、`purgeArticleCache` の
+   * 手前で `SQLite3 can only bind numbers, strings, bigints, buffers, and null`
+   * が投がり、期限切れの掃除も収集元の配り直しも一度も走っていなかった。
+   * cron が発火していなかったので気づけなかった。
+   */
+  const dialect = new SQLiteSyncDialect();
+
+  test("binds no Date objects", () => {
+    const { params } = dialect.sqlToQuery(
+      buildArticleCachePurgeFilter(new Date("2026-05-12T00:00:00Z"))!,
+    );
+    expect(params.length).toBeGreaterThan(0);
+    for (const p of params) {
+      expect(p, `${String(p)} は driver がバインドできない`).not.toBeInstanceOf(
+        Date,
+      );
+      expect(["number", "string", "bigint"]).toContain(typeof p);
+    }
+  });
+
+  test("also matches rows that were never re-used", () => {
+    // `coalesce` をやめて `or` に分けた理由。SQL の `NULL < x` は NULL なので、
+    // `lastUsedAt` の比較だけでは未再利用の行が永久に残る。
+    const { sql: text } = dialect.sqlToQuery(
+      buildArticleCachePurgeFilter(new Date("2026-05-12T00:00:00Z"))!,
+    );
+    expect(text).toContain("is null");
+    expect(text).toContain("createdAt");
   });
 });
