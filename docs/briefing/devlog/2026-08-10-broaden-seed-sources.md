@@ -100,3 +100,97 @@ Slashdot は 200 で取得できたが、要約の質が低くブリーフィン
   800/98 ≒ 8 件から 800/158 ≒ 5 件に薄くなる**。D'Hondt は
   `domainId = NULL` のソースを重み 0.2 で均等に扱うため、これは
   「1 つの情報源を深く」から「多くの情報源を浅く」への意図的な移動
+
+---
+
+# feat(recommender): シードの増分を maintain で既存ユーザーへ配る
+
+- 作業日時: 2026-08-10
+- 対応内容: `runMaintain` に `syncSeedSources` を追加
+- 変更したファイル:
+  - `apps/workers/workers/recommender/maintain.ts`
+  - `apps/workers/workers/recommender/maintain.test.ts`（新規）
+  - `packages/trpc/routers/recommender.ts`（コメントのみ）
+- 確認内容: `selectMissingSeedSources` 4 件 pass
+
+シードを配るのは `enroll` だけで、そちらは「`recSources` が 1 件でもあれば
+何もしない」。**一度登録した人には一覧を増やしても永久に届かない。**
+今回 60 件足したが、既存の 1 人には 1 件も配られない状態だった。
+
+手順書で毎回流し込む運用にすると、忘れた瞬間に「人によって供給が違う」状態が
+できる ── 供給層は全員共通、という前提そのものが崩れる。`maintain`（02:00）で
+`name` 突き合わせの差分 insert にした。
+
+既にある行には触らない。とくに `enabled = false`（FR-C-07 の連続失敗で
+止めた収集元）はそのまま止めておく ── 復活させると壊れた feed を毎日叩く。
+一覧から外したものを消しもしない（供給層は削らない）。
+
+---
+
+# fix(recommender): enroll で埋め込みが二重に走るのを止める
+
+- 作業日時: 2026-08-10
+- 対応内容:
+  - `runCollect` に `enqueueEmbed` オプションを追加し、`runEnroll` から
+    `false` で呼ぶ
+  - enroll の埋め込みをメトリクスに積む
+- 変更したファイル:
+  - `apps/workers/workers/recommender/collect.ts`
+  - `apps/workers/workers/recommender/enroll.ts`
+  - `apps/workers/workers/recommender/index.ts`
+- 確認内容: `typecheck` / `lint` / `format` pass、workers のテスト 19 件 pass
+
+## どうやって見つけたか
+
+本番に 2 人目（使い捨てのテストユーザー）を作って `enroll` を実際に通した。
+**PR #22 / #24 はデプロイ済みだが本番で一度も実行されていなかった。**
+
+## ① 埋め込みが二重に走る
+
+```
+01:16:31 [embed][955] 793 candidates need an embedding
+01:16:31 [embed][955] 57 embeddings came from the shared article cache
+01:16:35 [embed][956] 704 candidates need an embedding   ← 4 秒後に別ランナー
+01:25:23 [embed][955] embedded 736 (57 shared)
+01:25:29 [embed][956] embedded 704 (0 shared)            ← 704 件を二重計算
+```
+
+`runCollect` は取り込み後に `RecommenderEmbedQueue` へ埋め込みジョブを投入する。
+`runEnroll` は順序保証のために自分でも `runEmbed` を呼ぶ。`runEmbed` は
+`embeddingStatus='pending'` を `findMany` で掴むだけで**取り合いの調停を
+しない**ので、2 つのランナーが同じ候補を両方処理する。
+
+enroll 全体 10 分 23 秒のうち埋め込みが 9 分弱で、その大半が無駄。Ollama を
+2 本で取り合うので待ちも伸びる。
+
+`enqueueEmbed: false` で投入自体を止めた。既定は `true` なので日次 cron の
+経路は変わらない。
+
+## ② enroll の埋め込みがメトリクスに出ない
+
+`enroll` は `runEmbed` を直接呼ぶので `embed` タスクのランナーを通らず、
+カウンタが一切増えない。**実際 57 件ヒットしていたのに
+`karakeep_recommender_embeddings_total{outcome="shared"}` が 0 のままで、
+共有キャッシュが効いていないと誤読しかけた。** dispatcher の `enroll` case で
+積むようにした。
+
+## 副産物として取れた実測値
+
+| 項目 | 値 |
+|---|---|
+| `runEnroll` 全体 | **10 分 23 秒**（計画の見積り「10 分弱」とほぼ一致） |
+| collect（98 収集元） | **約 75 秒**、2,729 件取得 → 800 件選抜 → 793 件挿入 |
+| 埋め込み（793 件） | 約 9 分（うち 704 件は二重計算の無駄） |
+| 共有キャッシュのヒット | 埋め込み **57 件**、ダイジェストは初日ゆえ僅少 |
+| 収集元の失敗 | 2/98（arXiv が 429、Reddit Engineering が 403） |
+
+collect が 75 秒なら 158 収集元で 2 分前後、5 人で 10 分。04:30〜05:30 の窓に
+収まる。**計画で唯一未測定だった前提がこれで埋まった。**
+
+## 残課題
+
+- `Reddit Engineering`（`https://www.reddit.com/r/RedditEng.rss`）が 403。
+  Reddit が UA なしの RSS を弾くようになった。連続 5 回で自動無効化される
+  ので放置でも壊れないが、代替が無いなら一覧から外すべき
+- `runEmbed` は依然として行を掴む調停をしない。今回は投入側を止めて回避したが、
+  ほかの経路で 2 つ走れば同じことが起きる
