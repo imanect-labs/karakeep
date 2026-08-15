@@ -267,8 +267,16 @@ async function generateBatch(
     const parsed = parseBatchDigestResponse(raw);
     if (parsed.size < group.length) {
       logger.warn(
-        `[recommender][digest][${jobId}] batch returned ${parsed.size}/${group.length}, falling back to single calls for the rest`,
+        `[recommender][digest][${jobId}] batch returned ${parsed.size}/${group.length} usable (欠落 or 簡体字), falling back to single calls for the rest`,
       );
+      // 1 件も読めないのは応答の形が想定外のとき。**中身を出さないと次に
+      // 同じことが起きても分からない。** 実際に 0/10 を 1 回踏んで、
+      // 再現を試みても同じ形が出せなかった。
+      if (parsed.size === 0) {
+        logger.debug(
+          `[recommender][digest][${jobId}] unparsable batch response: ${raw.slice(0, 300)}`,
+        );
+      }
     }
     return parsed;
   } catch (e) {
