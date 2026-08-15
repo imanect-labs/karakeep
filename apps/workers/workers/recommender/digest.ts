@@ -7,10 +7,14 @@ import { recCandidates, recImpressions } from "@karakeep/db/schema";
 import { buildUserAgent } from "@karakeep/recommender";
 import serverConfig from "@karakeep/shared/config";
 import type { ParsedDigest } from "@karakeep/shared/digest";
+import type { DigestClient } from "@karakeep/shared/digest";
 import {
+  buildBatchDigestUserPrompt,
   buildDigestClient,
   buildDigestUserPrompt,
+  DIGEST_BATCH_SYSTEM_PROMPT,
   DIGEST_SYSTEM_PROMPT,
+  parseBatchDigestResponse,
   parseDigestResponse,
 } from "@karakeep/shared/digest";
 import logger from "@karakeep/shared/logger";
@@ -112,6 +116,10 @@ export async function runDigest(
   const cached = await loadArticleCache(rows.map((r) => r.urlHash));
   const sharedHashes: string[] = [];
 
+  // 生成が要る候補を先に確定させる。バッチで投げるには本文まで揃っている
+  // 必要があるので、キャッシュ判定と本文取得をここで済ませてしまう。
+  const pending: PendingDigest[] = [];
+
   for (const row of rows) {
     // モデルを替えたら作り直す。プロンプトを変えたときは
     // RECOMMENDER_DIGEST_MODEL に別名を付けるか、列を消して再生成する。
@@ -151,58 +159,143 @@ export async function runDigest(
       continue;
     }
 
-    let digest: ParsedDigest | null = null;
-    try {
-      const raw = await client.complete(
-        DIGEST_SYSTEM_PROMPT,
-        buildDigestUserPrompt({ title: row.title, url: row.url, body }),
-      );
-      digest = parseDigestResponse(raw);
-    } catch (e) {
-      logger.warn(
-        `[recommender][digest][${jobId}] ${row.url} failed: ${e instanceof Error ? e.message : e}`,
-      );
-    }
+    pending.push({ row, body });
+  }
 
-    if (!digest) {
-      result.failed++;
-      // 失敗を記録して次へ。UI は原題と元の要約に落ちる（NFR-09）。
-      //
-      // **共有キャッシュには書かない。** digest の失敗はたいてい本文取得の
-      // 一時的な問題で、全ユーザーに配ると再試行の経路が消える。skipped も同じ。
+  // バッチはプロバイダが対応しているときだけ。`completeBatch` を持たない
+  // ローカル Ollama では 1 件ずつに落ちる。
+  const completeBatch = client.completeBatch?.bind(client);
+  const batchSize = completeBatch ? Math.max(1, cfg.batchSize) : 1;
+  if (pending.length > 0) {
+    log(`${pending.length} to generate, batch size ${batchSize}`);
+  }
+  // バッチが欠けて単発に落ちた件数。バッチが機能しているかはこれで見る。
+  let fellBack = 0;
+
+  for (let i = 0; i < pending.length; i += batchSize) {
+    const group = pending.slice(i, i + batchSize);
+    const batched =
+      group.length > 1 && completeBatch
+        ? await generateBatch(completeBatch, group, jobId)
+        : new Map<number, ParsedDigest>();
+
+    for (const [index, item] of group.entries()) {
+      // バッチの ID は group 内の 1 始まりの位置（`buildBatchDigestUserPrompt`）。
+      let digest = batched.get(index + 1) ?? null;
+      if (!digest) {
+        if (group.length > 1) {
+          fellBack++;
+        }
+        digest = await generateSingle(client, item, jobId);
+      }
+
+      if (!digest) {
+        result.failed++;
+        // 失敗を記録して次へ。UI は原題と元の要約に落ちる（NFR-09）。
+        //
+        // **共有キャッシュには書かない。** digest の失敗はたいてい本文取得の
+        // 一時的な問題で、全ユーザーに配ると再試行の経路が消える。skipped も同じ。
+        await db
+          .update(recCandidates)
+          .set({ digestStatus: "failure", digestModelId: client.modelId })
+          .where(eq(recCandidates.id, item.row.id));
+        continue;
+      }
+
+      result.generated++;
       await db
         .update(recCandidates)
-        .set({ digestStatus: "failure", digestModelId: client.modelId })
-        .where(eq(recCandidates.id, row.id));
-      continue;
-    }
-
-    result.generated++;
-    await db
-      .update(recCandidates)
-      .set({
+        .set({
+          titleJa: digest.titleJa,
+          summaryJa: digest.summaryJa,
+          digestStatus: "success",
+          digestModelId: client.modelId,
+        })
+        .where(eq(recCandidates.id, item.row.id));
+      await putDigest({
+        urlHash: item.row.urlHash,
+        canonicalUrl: item.row.canonicalUrl,
         titleJa: digest.titleJa,
         summaryJa: digest.summaryJa,
-        digestStatus: "success",
-        digestModelId: client.modelId,
-      })
-      .where(eq(recCandidates.id, row.id));
-    await putDigest({
-      urlHash: row.urlHash,
-      canonicalUrl: row.canonicalUrl,
-      titleJa: digest.titleJa,
-      summaryJa: digest.summaryJa,
-      modelId: client.modelId,
-      now,
-    });
+        modelId: client.modelId,
+        now,
+      });
+    }
   }
 
   await touchArticleCache(sharedHashes, now);
 
   log(
-    `generated ${result.generated}, cached ${result.cached}, shared ${result.shared}, failed ${result.failed}, skipped ${result.skipped}`,
+    `generated ${result.generated}, cached ${result.cached}, shared ${result.shared}, failed ${result.failed}, skipped ${result.skipped}` +
+      (batchSize > 1 ? `, single-call fallbacks ${fellBack}` : ""),
   );
   return result;
+}
+
+interface PendingDigest {
+  row: {
+    id: string;
+    url: string;
+    urlHash: string;
+    canonicalUrl: string;
+    title: string | null;
+  };
+  body: string;
+}
+
+const toDigestInput = (item: PendingDigest) => ({
+  title: item.row.title,
+  url: item.row.url,
+  body: item.body,
+});
+
+/**
+ * まとめて 1 回で作る。**部分的な成功を許す。** 読めた ID だけ返し、
+ * 欠けたぶんは呼び出し側が単発で作り直す。1 件の取りこぼしで group 全体を
+ * 落とすと、バッチにした瞬間に失敗率が跳ね上がる。
+ */
+async function generateBatch(
+  completeBatch: NonNullable<DigestClient["completeBatch"]>,
+  group: PendingDigest[],
+  jobId: string,
+): Promise<Map<number, ParsedDigest>> {
+  try {
+    const raw = await completeBatch(
+      DIGEST_BATCH_SYSTEM_PROMPT,
+      buildBatchDigestUserPrompt(group.map(toDigestInput)),
+    );
+    const parsed = parseBatchDigestResponse(raw);
+    if (parsed.size < group.length) {
+      logger.warn(
+        `[recommender][digest][${jobId}] batch returned ${parsed.size}/${group.length}, falling back to single calls for the rest`,
+      );
+    }
+    return parsed;
+  } catch (e) {
+    logger.warn(
+      `[recommender][digest][${jobId}] batch of ${group.length} failed: ${e instanceof Error ? e.message : e}`,
+    );
+    return new Map();
+  }
+}
+
+async function generateSingle(
+  client: DigestClient,
+  item: PendingDigest,
+  jobId: string,
+): Promise<ParsedDigest | null> {
+  try {
+    const raw = await client.complete(
+      DIGEST_SYSTEM_PROMPT,
+      buildDigestUserPrompt(toDigestInput(item)),
+    );
+    return parseDigestResponse(raw);
+  } catch (e) {
+    logger.warn(
+      `[recommender][digest][${jobId}] ${item.row.url} failed: ${e instanceof Error ? e.message : e}`,
+    );
+    return null;
+  }
 }
 
 /* ------------------------------------------------------------------ *
