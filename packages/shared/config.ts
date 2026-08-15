@@ -146,6 +146,10 @@ const allEnv = z.object({
     .enum(["off", "local", "external"])
     .default("off"),
   RECOMMENDER_DIGEST_MODEL: z.string().default("qwen3.5:4b"),
+  // 1 回の呼び出しで作る件数。1 で単発 (既定)。
+  // **external でだけ効く。** local (Ollama) は num_ctx=2048 なので、本文
+  // 1000 字を数件並べた時点で溢れる。
+  RECOMMENDER_DIGEST_BATCH_SIZE: z.coerce.number().int().positive().default(1),
   // 記事本文が足りないときに URL を fetch して readability で抜くか。
   RECOMMENDER_DIGEST_FETCH_BODY: stringBool("true"),
   // 要約の入力に使う本文の最大文字数。長いほど品質は上がるが遅くなる。
@@ -498,6 +502,7 @@ const serverConfigSchema = allEnv.transform((val, ctx) => {
       digest: {
         provider: val.RECOMMENDER_DIGEST_PROVIDER,
         model: val.RECOMMENDER_DIGEST_MODEL,
+        batchSize: val.RECOMMENDER_DIGEST_BATCH_SIZE,
         fetchBody: val.RECOMMENDER_DIGEST_FETCH_BODY,
         bodyChars: val.RECOMMENDER_DIGEST_BODY_CHARS,
       },

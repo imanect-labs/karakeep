@@ -1,8 +1,10 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  buildBatchDigestUserPrompt,
   buildDigestUserPrompt,
   NO_BODY_PLACEHOLDER,
+  parseBatchDigestResponse,
   parseDigestResponse,
 } from "./digest";
 
@@ -65,5 +67,99 @@ describe("parseDigestResponse", () => {
     expect(parseDigestResponse("すみません、わかりません")).toBeNull();
     expect(parseDigestResponse("")).toBeNull();
     expect(parseDigestResponse("{ broken")).toBeNull();
+  });
+});
+
+describe("buildBatchDigestUserPrompt", () => {
+  test("numbers the articles from 1 and separates them", () => {
+    const prompt = buildBatchDigestUserPrompt([
+      { title: "First", url: "https://example.com/1", body: "one" },
+      { title: "Second", url: "https://example.com/2", body: "two" },
+    ]);
+    expect(prompt).toContain("[1]\nTITLE: First");
+    expect(prompt).toContain("[2]\nTITLE: Second");
+    expect(prompt).toContain("\n---\n");
+  });
+});
+
+describe("parseBatchDigestResponse", () => {
+  const expected = (n: number) => ({
+    titleJa: `訳題${n}`,
+    summaryJa: `要約${n}`,
+  });
+
+  test("reads the documented items[] shape", () => {
+    const parsed = parseBatchDigestResponse(
+      '{"items":[{"id":1,"title_ja":"訳題1","summary_ja":"要約1"},{"id":2,"title_ja":"訳題2","summary_ja":"要約2"}]}',
+    );
+    expect(parsed.get(1)).toEqual(expected(1));
+    expect(parsed.get(2)).toEqual(expected(2));
+  });
+
+  test("reads an id-keyed object", () => {
+    // 実測 (OpenCode Go / mimo-v2.5): strict な json_schema を付けても
+    // この形で返ってくることがある。
+    const parsed = parseBatchDigestResponse(
+      '{"1":{"title_ja":"訳題1","summary_ja":"要約1"},"2":{"title_ja":"訳題2","summary_ja":"要約2"}}',
+    );
+    expect(parsed.size).toBe(2);
+    expect(parsed.get(2)).toEqual(expected(2));
+  });
+
+  test("reads an array under a different key, and a bare array", () => {
+    expect(
+      parseBatchDigestResponse(
+        '{"results":[{"id":7,"title_ja":"訳題7","summary_ja":"要約7"}]}',
+      ).get(7),
+    ).toEqual(expected(7));
+    expect(
+      parseBatchDigestResponse(
+        '[{"id":1,"title_ja":"訳題1","summary_ja":"要約1"}]',
+      ).get(1),
+    ).toEqual(expected(1));
+  });
+
+  test("falls back to the position when an array item has no id", () => {
+    const parsed = parseBatchDigestResponse(
+      '[{"title_ja":"訳題1","summary_ja":"要約1"},{"title_ja":"訳題2","summary_ja":"要約2"}]',
+    );
+    expect(parsed.get(1)).toEqual(expected(1));
+    expect(parsed.get(2)).toEqual(expected(2));
+  });
+
+  test('reads a string "1" as an id', () => {
+    expect(
+      parseBatchDigestResponse(
+        '{"items":[{"id":"3","title_ja":"訳題3","summary_ja":"要約3"}]}',
+      ).get(3),
+    ).toEqual(expected(3));
+  });
+
+  test("keeps the readable items and drops the broken ones", () => {
+    // 欠けた ID は呼び出し側が単発で作り直す。1 件の取りこぼしで
+    // バッチ全体を捨てない。
+    const parsed = parseBatchDigestResponse(
+      '{"items":[{"id":1,"title_ja":"訳題1","summary_ja":"要約1"},{"id":2,"title_ja":"","summary_ja":"要約2"},{"id":3,"summary_ja":"要約3"}]}',
+    );
+    expect([...parsed.keys()]).toEqual([1]);
+  });
+
+  test("turns an empty summary into null", () => {
+    expect(
+      parseBatchDigestResponse(
+        '{"items":[{"id":1,"title_ja":"訳題1","summary_ja":"   "}]}',
+      ).get(1),
+    ).toEqual({ titleJa: "訳題1", summaryJa: null });
+  });
+
+  test("survives a code fence, and returns empty on junk", () => {
+    expect(
+      parseBatchDigestResponse(
+        'はい:\n```json\n{"items":[{"id":1,"title_ja":"訳題1","summary_ja":"要約1"}]}\n```',
+      ).get(1),
+    ).toEqual(expected(1));
+    expect(parseBatchDigestResponse("すみません").size).toBe(0);
+    expect(parseBatchDigestResponse("").size).toBe(0);
+    expect(parseBatchDigestResponse("{ broken").size).toBe(0);
   });
 });
