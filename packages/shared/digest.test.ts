@@ -152,6 +152,25 @@ describe("parseBatchDigestResponse", () => {
     ).toEqual({ titleJa: "訳題1", summaryJa: null });
   });
 
+  test("drops items that leaked simplified Chinese", () => {
+    // バッチだと 3〜4% の頻度で「中间」「时」のような字が混ざる (実測)。
+    // 読めなかった扱いにして単発で作り直させる。
+    const parsed = parseBatchDigestResponse(
+      '{"items":[' +
+        '{"id":1,"title_ja":"訳題1","summary_ja":"中间ステップが潜在空間にある。"},' +
+        '{"id":2,"title_ja":"潜在推論モデルの时代","summary_ja":"要約2"},' +
+        '{"id":3,"title_ja":"訳題3","summary_ja":"要約3"}]}',
+    );
+    expect([...parsed.keys()]).toEqual([3]);
+  });
+
+  test("keeps kanji that Japanese actually uses", () => {
+    const parsed = parseBatchDigestResponse(
+      '{"items":[{"id":1,"title_ja":"中間表現と時間","summary_ja":"問題の実現には認識と経験が必要。専門用語は原語のまま。"}]}',
+    );
+    expect(parsed.get(1)?.titleJa).toBe("中間表現と時間");
+  });
+
   test("survives a code fence, and returns empty on junk", () => {
     expect(
       parseBatchDigestResponse(

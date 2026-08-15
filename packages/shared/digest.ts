@@ -170,9 +170,32 @@ export function parseBatchDigestResponse(
       continue;
     }
     const summaryJa = parsed.data.summary_ja.trim();
+    // 簡体字が混ざったものは**読めなかった扱いにする**。呼び出し側が単発で
+    // 作り直し、単発なら実測で出ない (下記)。
+    if (hasSimplifiedOnlyChars(titleJa) || hasSimplifiedOnlyChars(summaryJa)) {
+      continue;
+    }
     result.set(id, { titleJa, summaryJa: summaryJa || null });
   }
   return result;
+}
+
+/**
+ * 日本語では使わない簡体字。**バッチのときだけ混ざる。**
+ *
+ * mimo-v2.5 の本番出力 50 件で 2 件 (中间・时)、切り分けでも 10 件バッチ 3 回で
+ * 1 件出た。同じ記事を単発で 3 回ずつ投げると 6/6 とも出ない。プロンプトの
+ * 「中国語の語彙を使わない」が、記事 10 件ぶんの入力に薄められて効かなくなる。
+ *
+ * 「日本語に無い字が 1 つでもあれば作り直す」だけの雑な判定にしてある。
+ * 拾い漏らしても実害は「その 1 件が中国語混じりで出る」だけで、逆に
+ * 誤検出しても単発で作り直すコスト (1 件ぶんの呼び出し) しかかからない。
+ */
+const SIMPLIFIED_ONLY =
+  /[这们个时说对关实现应该从问题认识软网级经样单变书专业务击开间为讲够继续获难产权义图习决张团队军岁]/;
+
+export function hasSimplifiedOnlyChars(text: string | null): boolean {
+  return text !== null && SIMPLIFIED_ONLY.test(text);
 }
 
 function collectBatchEntries(value: object): [number, unknown][] {

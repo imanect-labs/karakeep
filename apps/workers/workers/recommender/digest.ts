@@ -267,7 +267,7 @@ async function generateBatch(
     const parsed = parseBatchDigestResponse(raw);
     if (parsed.size < group.length) {
       logger.warn(
-        `[recommender][digest][${jobId}] batch returned ${parsed.size}/${group.length}, falling back to single calls for the rest`,
+        `[recommender][digest][${jobId}] batch returned ${parsed.size}/${group.length} usable (欠落 or 簡体字), falling back to single calls for the rest`,
       );
     }
     return parsed;
