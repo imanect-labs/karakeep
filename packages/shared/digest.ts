@@ -143,11 +143,15 @@ export function parseDigestResponse(raw: string): ParsedDigest | null {
  *   {"results": [{"id": 1, ...}]} … キー名だけ違う
  *   {"1": {...}, "2": {...}}      … ID をキーにした object
  *   [{"id": 1, ...}]              … 素の配列
+ *
+ * 全体が JSON として読めないときは、**中の項目だけを拾い直す** (サルベージ)。
+ * 応答が途中で切れると外側の `}` が来ないので JSON.parse が丸ごと落ちるが、
+ * 切れる前の項目は完全な形で入っている。本番で 10 件中 1 件も読めずに
+ * 単発 10 回へ落ちたことが 2 回あり、どちらもここで救える形だった。
  */
 export function parseBatchDigestResponse(
   raw: string,
 ): Map<number, ParsedDigest> {
-  const result = new Map<number, ParsedDigest>();
   const text = raw.trim();
   // 素の配列で返ってくることがあるので、`[` が先に来ていたら配列として読む。
   const objectAt = text.indexOf("{");
@@ -156,11 +160,21 @@ export function parseBatchDigestResponse(
     arrayAt !== -1 && (objectAt === -1 || arrayAt < objectAt)
       ? (extractJson(text, "[") ?? extractJson(text, "{"))
       : (extractJson(text, "{") ?? extractJson(text, "["));
-  if (value === undefined || value === null || typeof value !== "object") {
+
+  const entries =
+    value !== undefined && value !== null && typeof value === "object"
+      ? collectBatchEntries(value)
+      : [];
+  const result = buildDigests(entries);
+  if (result.size > 0) {
     return result;
   }
+  return buildDigests(salvageBatchEntries(text));
+}
 
-  for (const [id, item] of collectBatchEntries(value)) {
+function buildDigests(entries: [number, unknown][]): Map<number, ParsedDigest> {
+  const result = new Map<number, ParsedDigest>();
+  for (const [id, item] of entries) {
     const parsed = digestSchema.safeParse(item);
     if (!parsed.success) {
       continue;
@@ -178,6 +192,65 @@ export function parseBatchDigestResponse(
     result.set(id, { titleJa, summaryJa: summaryJa || null });
   }
   return result;
+}
+
+/**
+ * 壊れた応答から項目だけを拾う。
+ *
+ * **ID を持つ項目しか拾わない。** 全体が読めている通常経路では「配列の位置」で
+ * ID を補えるが、途中で切れた応答では何件目まで来ているのか保証が無い。
+ * 位置で補うと別の記事の要約を書き込みかねないので、ここでは諦めて単発の
+ * 作り直しに回す。
+ */
+function salvageBatchEntries(text: string): [number, unknown][] {
+  const entries: [number, unknown][] = [];
+  for (const object of scanBalancedObjects(text)) {
+    const id = readItemId(object);
+    if (id !== null) {
+      entries.push([id, object]);
+    }
+  }
+  return entries;
+}
+
+/**
+ * 文字列中の「対応が取れている `{...}`」をすべて読む。入れ子の内側から
+ * 閉じるので、外側が閉じていなくても中の項目は拾える。
+ */
+function scanBalancedObjects(text: string): unknown[] {
+  const found: unknown[] = [];
+  const starts: number[] = [];
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === "{") {
+      starts.push(i);
+    } else if (ch === "}") {
+      const start = starts.pop();
+      if (start !== undefined) {
+        try {
+          found.push(JSON.parse(text.slice(start, i + 1)));
+        } catch {
+          // 中に壊れた項目があるだけ。他の項目は拾える。
+        }
+      }
+    }
+  }
+  return found;
 }
 
 /**

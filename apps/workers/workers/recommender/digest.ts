@@ -270,11 +270,11 @@ async function generateBatch(
         `[recommender][digest][${jobId}] batch returned ${parsed.size}/${group.length} usable (欠落 or 簡体字), falling back to single calls for the rest`,
       );
       // 1 件も読めないのは応答の形が想定外のとき。**中身を出さないと次に
-      // 同じことが起きても分からない。** 実際に 0/10 を 1 回踏んで、
-      // 再現を試みても同じ形が出せなかった。
+      // 同じことが起きても分からない。** 先頭だけだと「途中で切れたのか、
+      // 最初から別の形なのか」が判別できないので末尾も出す。
       if (parsed.size === 0) {
         logger.debug(
-          `[recommender][digest][${jobId}] unparsable batch response: ${raw.slice(0, 300)}`,
+          `[recommender][digest][${jobId}] unparsable batch response (${raw.length} chars) head=${JSON.stringify(raw.slice(0, 200))} tail=${JSON.stringify(raw.slice(-200))}`,
         );
       }
     }
@@ -297,7 +297,15 @@ async function generateSingle(
       DIGEST_SYSTEM_PROMPT,
       buildDigestUserPrompt(toDigestInput(item)),
     );
-    return parseDigestResponse(raw);
+    const digest = parseDigestResponse(raw);
+    if (!digest) {
+      // 例外なら下の warn に出るが、**読めない出力が返っただけだと今まで
+      // 何も残らなかった。** 実際に 1 件 failure になって理由を追えなかった。
+      logger.debug(
+        `[recommender][digest][${jobId}] ${item.row.url} unparsable single response (${raw.length} chars): ${JSON.stringify(raw.slice(0, 200))}`,
+      );
+    }
+    return digest;
   } catch (e) {
     logger.warn(
       `[recommender][digest][${jobId}] ${item.row.url} failed: ${e instanceof Error ? e.message : e}`,
