@@ -164,6 +164,45 @@ describe("parseBatchDigestResponse", () => {
     expect([...parsed.keys()]).toEqual([3]);
   });
 
+  test("salvages the items out of a truncated response", () => {
+    // 応答が途中で切れると外側の `}` が来ず、JSON.parse は丸ごと落ちる。
+    // 切れる前の項目は完全な形で入っているので拾う。
+    const parsed = parseBatchDigestResponse(
+      '{\n "items": [\n  {"id": 1, "title_ja": "訳題1", "summary_ja": "要約1"},\n' +
+        '  {"id": 2, "title_ja": "訳題2", "summary_ja": "要約2"},\n' +
+        '  {"id": 3, "title_ja": "訳題3が途中で切れ',
+    );
+    expect([...parsed.keys()]).toEqual([1, 2]);
+    expect(parsed.get(2)).toEqual({ titleJa: "訳題2", summaryJa: "要約2" });
+  });
+
+  test("does not guess ids while salvaging", () => {
+    // 何件目まで来ているか保証が無いので、ID が無い項目は諦める。
+    // 位置で補うと別の記事の要約を書き込みかねない。
+    const parsed = parseBatchDigestResponse(
+      '{"items": [{"title_ja": "訳題1", "summary_ja": "要約1"},' +
+        '{"id": 2, "title_ja": "訳題2", "summary_ja": "要約2"',
+    );
+    expect([...parsed.keys()]).toEqual([]);
+  });
+
+  test("still drops simplified Chinese while salvaging", () => {
+    const parsed = parseBatchDigestResponse(
+      '{"items": [{"id": 1, "title_ja": "訳題1", "summary_ja": "中间ステップ"},' +
+        '{"id": 2, "title_ja": "訳題2", "summary_ja": "要約2"},' +
+        '{"id": 3, "title_ja": "途中で',
+    );
+    expect([...parsed.keys()]).toEqual([2]);
+  });
+
+  test("is not confused by braces inside strings", () => {
+    const parsed = parseBatchDigestResponse(
+      '{"items": [{"id": 1, "title_ja": "JSON の {\\"a\\": 1} を扱う", "summary_ja": "括弧と \\" を含む要約"},' +
+        '{"id": 2, "title_ja": "訳題2", "summary_ja": "切れ',
+    );
+    expect(parsed.get(1)?.titleJa).toBe('JSON の {"a": 1} を扱う');
+  });
+
   test("keeps kanji that Japanese actually uses", () => {
     const parsed = parseBatchDigestResponse(
       '{"items":[{"id":1,"title_ja":"中間表現と時間","summary_ja":"問題の実現には認識と経験が必要。専門用語は原語のまま。"}]}',
