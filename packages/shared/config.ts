@@ -223,6 +223,9 @@ const allEnv = z.object({
   // Go) that otherwise spend the whole output budget on reasoning and return empty
   // content ("Got no message content"). (imanect-labs fork)
   INFERENCE_DISABLE_THINKING: stringBool("false"),
+  // Send `x-opencode-session` (and a karakeep user agent) with every chat call.
+  // OpenCode Go answers 400 MissingSessionID without it. (imanect-labs fork)
+  INFERENCE_OPENCODE_SESSION: stringBool("false"),
   // Structure-preserving LLM HTML translation (imanect-labs fork).
   TRANSLATION_ENABLE_AUTO: stringBool("false"),
   TRANSLATION_TARGET_LANG: z.string().default("japanese"),
@@ -435,6 +438,7 @@ const serverConfigSchema = allEnv.transform((val, ctx) => {
       maxOutputTokens: val.INFERENCE_MAX_OUTPUT_TOKENS,
       useMaxCompletionTokens: val.INFERENCE_USE_MAX_COMPLETION_TOKENS,
       disableThinking: val.INFERENCE_DISABLE_THINKING,
+      opencodeSession: val.INFERENCE_OPENCODE_SESSION,
       outputSchema:
         val.INFERENCE_SUPPORTS_STRUCTURED_OUTPUT !== undefined
           ? val.INFERENCE_SUPPORTS_STRUCTURED_OUTPUT

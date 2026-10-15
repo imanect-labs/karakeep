@@ -366,6 +366,7 @@ export async function runTranslation(
         const result = await inferenceClient.inferFromText(prompt, {
           schema: null,
           abortSignal: job.abortSignal,
+          sessionId: `karakeep-translation-${bookmarkId}`,
         });
         totalTokens += result.totalTokens ?? 0;
         if (!result.response) {

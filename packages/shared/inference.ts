@@ -106,6 +106,10 @@ export interface InferenceOptions {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   schema: z.ZodSchema<any> | null;
   abortSignal?: AbortSignal;
+  // Groups calls that belong to one conversation (e.g. all chunks of one
+  // bookmark's translation). Sent as `x-opencode-session` when
+  // INFERENCE_OPENCODE_SESSION is on. (imanect-labs fork)
+  sessionId?: string;
 }
 
 const defaultInferenceOptions: InferenceOptions = {
@@ -167,6 +171,7 @@ export interface OpenAIInferenceConfig {
   useMaxCompletionTokens: boolean;
   reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
   disableThinking?: boolean;
+  opencodeSession?: boolean;
   outputSchema: "structured" | "json" | "plain";
 }
 
@@ -220,7 +225,23 @@ export class OpenAIInferenceClient implements InferenceClient {
       outputSchema: serverConfig.inference.outputSchema,
       reasoningEffort: serverConfig.inference.openAIReasoningEffort,
       disableThinking: serverConfig.inference.disableThinking,
+      opencodeSession: serverConfig.inference.opencodeSession,
     });
+  }
+
+  // OpenCode Go rejects requests without `x-opencode-session` (400
+  // MissingSessionID) and asks clients to name themselves in the user agent.
+  // https://opencode.ai/docs/go/ (imanect-labs fork)
+  private requestHeaders(
+    opts: InferenceOptions,
+  ): Record<string, string> | undefined {
+    if (!this.config.opencodeSession) {
+      return undefined;
+    }
+    return {
+      "x-opencode-session": opts.sessionId ?? "karakeep",
+      "User-Agent": "karakeep",
+    };
   }
 
   async inferFromText(
@@ -254,6 +275,7 @@ export class OpenAIInferenceClient implements InferenceClient {
       },
       {
         signal: optsWithDefaults.abortSignal,
+        headers: this.requestHeaders(optsWithDefaults),
       },
     );
 
@@ -309,6 +331,7 @@ export class OpenAIInferenceClient implements InferenceClient {
       },
       {
         signal: optsWithDefaults.abortSignal,
+        headers: this.requestHeaders(optsWithDefaults),
       },
     );
 
