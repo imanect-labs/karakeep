@@ -5,19 +5,26 @@ import { OpenAIInferenceClient } from "./inference";
 import type { OpenAIInferenceConfig } from "./inference";
 
 const capturedBodies: Record<string, unknown>[] = [];
+const capturedRequestOptions: { headers?: Record<string, string> }[] = [];
 const tagSchema = z.object({ tags: z.array(z.string()) });
 
 vi.mock("openai", () => {
   const OpenAIMock = vi.fn().mockImplementation(() => ({
     chat: {
       completions: {
-        create: vi.fn(async (body: Record<string, unknown>) => {
-          capturedBodies.push(body);
-          return {
-            choices: [{ message: { content: "{}" } }],
-            usage: { total_tokens: 1 },
-          };
-        }),
+        create: vi.fn(
+          async (
+            body: Record<string, unknown>,
+            options: { headers?: Record<string, string> },
+          ) => {
+            capturedBodies.push(body);
+            capturedRequestOptions.push(options);
+            return {
+              choices: [{ message: { content: "{}" } }],
+              usage: { total_tokens: 1 },
+            };
+          },
+        ),
       },
     },
   }));
@@ -89,6 +96,49 @@ describe("OpenAIInferenceClient response_format", () => {
     expect(capturedBodies[0].response_format).toMatchObject({
       type: "json_schema",
       json_schema: { name: "schema" },
+    });
+  });
+});
+
+describe("OpenAIInferenceClient x-opencode-session", () => {
+  beforeEach(() => {
+    capturedRequestOptions.length = 0;
+  });
+
+  it("sends no extra headers when disabled", async () => {
+    const client = new OpenAIInferenceClient(makeConfig("plain"));
+
+    await client.inferFromText("hi", { schema: null, sessionId: "s-1" });
+
+    expect(capturedRequestOptions[0].headers).toBeUndefined();
+  });
+
+  it("sends the caller's session id when enabled", async () => {
+    const client = new OpenAIInferenceClient({
+      ...makeConfig("plain"),
+      opencodeSession: true,
+    });
+
+    await client.inferFromText("hi", { schema: null, sessionId: "s-1" });
+
+    expect(capturedRequestOptions[0].headers).toMatchObject({
+      "x-opencode-session": "s-1",
+      "User-Agent": "karakeep",
+    });
+  });
+
+  it("falls back to a fixed session id", async () => {
+    const client = new OpenAIInferenceClient({
+      ...makeConfig("plain"),
+      opencodeSession: true,
+    });
+
+    await client.inferFromImage("describe", "image/png", "BASE64", {
+      schema: null,
+    });
+
+    expect(capturedRequestOptions[0].headers).toMatchObject({
+      "x-opencode-session": "karakeep",
     });
   });
 });
