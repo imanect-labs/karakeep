@@ -38,7 +38,7 @@ services:
     volumes:
       - ./setup/html:/usr/share/nginx/html
   minio:
-    image: minio/minio:latest
+    image: cgr.dev/chainguard/minio:latest
     restart: unless-stopped
     ports:
       - "9000:9000"
