@@ -35,6 +35,7 @@ import { requeueUnobserved, runRewardJoin } from "./feedback";
 import { runMaintain } from "./maintain";
 import { runRank } from "./rank";
 import { recommenderUserIds } from "./shared";
+import { runTrain } from "./train";
 
 /**
  * 日次パイプラインの本体。`discover` → `collect` → `embed` → `rank` の順に
@@ -132,10 +133,7 @@ async function runRecommenderTask(job: DequeuedJob<ZRecommenderTask>) {
       return;
     }
     case "train": {
-      // Phase 2。ログが貯まるまで学習しない（FR-L-07）。
-      logger.info(
-        `[recommender][${jobId}] training starts in Phase 2, nothing to do yet`,
-      );
+      await runTrain(task.userId, jobId);
       return;
     }
   }
