@@ -110,6 +110,8 @@ export interface InferenceOptions {
   // bookmark's translation). Sent as `x-opencode-session` when
   // INFERENCE_OPENCODE_SESSION is on. (imanect-labs fork)
   sessionId?: string;
+  // Receives the cumulative response while text is being generated.
+  onChunk?: (text: string) => void | Promise<void>;
 }
 
 const defaultInferenceOptions: InferenceOptions = {
@@ -252,31 +254,55 @@ export class OpenAIInferenceClient implements InferenceClient {
       ...defaultInferenceOptions,
       ..._opts,
     };
+    const body = {
+      messages: [{ role: "user" as const, content: prompt }],
+      model: this.config.textModel,
+      ...(this.config.serviceTier
+        ? { service_tier: this.config.serviceTier }
+        : {}),
+      ...(this.config.useMaxCompletionTokens
+        ? { max_completion_tokens: this.config.maxOutputTokens }
+        : { max_tokens: this.config.maxOutputTokens }),
+      response_format: mapOpenAIResponseFormat(
+        optsWithDefaults.schema,
+        this.config.outputSchema,
+      ),
+      reasoning_effort: this.config.reasoningEffort,
+      // Disable reasoning for reasoning models that otherwise burn the whole
+      // output budget on thinking and return empty content (imanect-labs fork).
+      ...(this.config.disableThinking
+        ? { thinking: { type: "disabled" } }
+        : {}),
+    };
+    const options = {
+      signal: optsWithDefaults.abortSignal,
+      headers: this.requestHeaders(optsWithDefaults),
+    };
+    if (optsWithDefaults.onChunk) {
+      const stream = await this.openAI.chat.completions.create(
+        { ...body, stream: true, stream_options: { include_usage: true } },
+        options,
+      );
+      let response = "";
+      let totalTokens: number | undefined;
+      try {
+        for await (const part of stream) {
+          if (part.usage) totalTokens = part.usage.total_tokens;
+          const delta = part.choices[0]?.delta.content;
+          if (delta) {
+            response += delta;
+            await optsWithDefaults.onChunk(response);
+          }
+        }
+        if (!response) throw new Error("Got no message content from OpenAI");
+        return { response, totalTokens };
+      } finally {
+        stream.controller.abort();
+      }
+    }
     const chatCompletion = await this.openAI.chat.completions.create(
-      {
-        messages: [{ role: "user", content: prompt }],
-        model: this.config.textModel,
-        ...(this.config.serviceTier
-          ? { service_tier: this.config.serviceTier }
-          : {}),
-        ...(this.config.useMaxCompletionTokens
-          ? { max_completion_tokens: this.config.maxOutputTokens }
-          : { max_tokens: this.config.maxOutputTokens }),
-        response_format: mapOpenAIResponseFormat(
-          optsWithDefaults.schema,
-          this.config.outputSchema,
-        ),
-        reasoning_effort: this.config.reasoningEffort,
-        // Disable reasoning for reasoning models that otherwise burn the whole
-        // output budget on thinking and return empty content (imanect-labs fork).
-        ...(this.config.disableThinking
-          ? { thinking: { type: "disabled" } }
-          : {}),
-      },
-      {
-        signal: optsWithDefaults.abortSignal,
-        headers: this.requestHeaders(optsWithDefaults),
-      },
+      body,
+      options,
     );
 
     const response = chatCompletion.choices[0].message.content;
@@ -436,6 +462,7 @@ class OllamaInferenceClient implements InferenceClient {
     try {
       for await (const part of chatCompletion) {
         response += part.response;
+        if (optsWithDefaults.onChunk) await optsWithDefaults.onChunk(response);
         if (!isNaN(part.eval_count)) {
           totalTokens += part.eval_count;
         }

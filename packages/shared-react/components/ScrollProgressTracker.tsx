@@ -21,6 +21,8 @@ const IDLE_SAVE_DELAY_MS = 5000;
 const PROGRESS_BAR_HIDE_DELAY_MS = 2000;
 
 interface ScrollProgressTrackerProps {
+  /** Pause persistence while displayed text is still changing in length. */
+  trackingEnabled?: boolean;
   /** Called lazily on intent signals (idle, visibility change, beforeunload, unmount) — use for persisting position */
   onSavePosition?: (position: ReadingPosition) => void;
   /** Called on every throttled scroll — use for responsive UI (banner dismissal, etc.) */
@@ -46,6 +48,7 @@ const ScrollProgressTracker = forwardRef<
   ScrollProgressTrackerProps
 >(function ScrollProgressTracker(
   {
+    trackingEnabled = true,
     onSavePosition,
     onScrollPositionChange,
     restorePosition,
@@ -62,6 +65,9 @@ const ScrollProgressTracker = forwardRef<
   const [scrollPercent, setScrollPercent] = useState(0);
   const [progressBarVisible, setProgressBarVisible] = useState(false);
   const latestPositionRef = useRef<ReadingPosition | null>(null);
+  const trackingEnabledRef = useRef(trackingEnabled);
+  trackingEnabledRef.current = trackingEnabled;
+  if (!trackingEnabled) latestPositionRef.current = null;
 
   const onSavePositionRef = useRef(onSavePosition);
   const onScrollPositionChangeRef = useRef(onScrollPositionChange);
@@ -75,6 +81,7 @@ const ScrollProgressTracker = forwardRef<
   useEffect(() => {
     if (
       !restorePosition ||
+      !trackingEnabled ||
       hasRestoredRef.current ||
       !readingProgressOffset ||
       readingProgressOffset <= 0
@@ -95,7 +102,12 @@ const ScrollProgressTracker = forwardRef<
     });
 
     return () => cancelAnimationFrame(rafId);
-  }, [restorePosition, readingProgressOffset, readingProgressAnchor]);
+  }, [
+    restorePosition,
+    readingProgressOffset,
+    readingProgressAnchor,
+    trackingEnabled,
+  ]);
 
   // Scroll tracking — updates the progress bar on every scroll,
   // but only reports position lazily via an idle timer.
@@ -109,6 +121,7 @@ const ScrollProgressTracker = forwardRef<
     let trailingTimerId: ReturnType<typeof setTimeout> | null = null;
 
     const reportLatestPosition = () => {
+      if (!trackingEnabledRef.current) return;
       const pos = latestPositionRef.current;
       if (pos && pos.offset > 0 && onSavePositionRef.current) {
         onSavePositionRef.current(pos);
@@ -116,6 +129,7 @@ const ScrollProgressTracker = forwardRef<
     };
 
     const processScroll = () => {
+      if (!trackingEnabledRef.current) return;
       lastScrollTime = Date.now();
 
       const position = getReadingPosition(container);
@@ -172,6 +186,7 @@ const ScrollProgressTracker = forwardRef<
   // Report position on visibility change, beforeunload, and unmount
   useEffect(() => {
     const reportPosition = () => {
+      if (!trackingEnabledRef.current) return;
       const pos = latestPositionRef.current;
       if (pos && pos.offset > 0 && onSavePositionRef.current) {
         onSavePositionRef.current(pos);
@@ -196,7 +211,7 @@ const ScrollProgressTracker = forwardRef<
 
   return (
     <div ref={containerRef}>
-      {showProgressBar && (
+      {showProgressBar && trackingEnabled && (
         <div
           style={{
             position: "sticky",

@@ -27,7 +27,7 @@ async function attemptMarkStatus(
     const request = zTranslationRequestSchema.parse(jobData);
     await db
       .update(bookmarkLinks)
-      .set({ translationStatus: status })
+      .set({ translationStatus: status, translationPreview: null })
       .where(eq(bookmarkLinks.id, request.bookmarkId));
   } catch (e) {
     logger.error(
@@ -55,6 +55,12 @@ export class TranslationWorker {
           if (translated) await attemptMarkStatus(job.data, "success");
         },
         onError: async (job) => {
+          if (job.data?.bookmarkId) {
+            await db
+              .update(bookmarkLinks)
+              .set({ translationPreview: null })
+              .where(eq(bookmarkLinks.id, job.data.bookmarkId));
+          }
           workerStatsCounter.labels("translation", "failed").inc();
           logger.error(
             `[translation][${job.id}] translation job failed: ${job.error}\n${job.error.stack}`,
@@ -91,7 +97,7 @@ export async function runTranslationJob(job: DequeuedJob<ZTranslationRequest>) {
   if (!serverConfig.translation.enableAuto && !request.data.requestedByUser) {
     await db
       .update(bookmarkLinks)
-      .set({ translationStatus: null })
+      .set({ translationStatus: null, translationPreview: null })
       .where(
         and(
           eq(bookmarkLinks.id, request.data.bookmarkId),
@@ -106,7 +112,7 @@ export async function runTranslationJob(job: DequeuedJob<ZTranslationRequest>) {
 
   await db
     .update(bookmarkLinks)
-    .set({ translationStatus: "pending" })
+    .set({ translationStatus: "pending", translationPreview: null })
     .where(eq(bookmarkLinks.id, request.data.bookmarkId));
   await runTranslation(request.data.bookmarkId, job, inferenceClient);
   return true;

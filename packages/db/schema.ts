@@ -298,6 +298,11 @@ export const bookmarkLinks = sqliteTable(
     // (imanect-labs fork). translationStatus is null when translation was never
     // attempted (disabled / non-source-language), otherwise pending/failure/success.
     translatedContent: text("translatedContent"),
+    // In-flight prose only, never trusted as HTML or used for retry offsets.
+    translationPreview: text("translationPreview", { mode: "json" }).$type<{
+      text: string;
+      sourceEnd: number;
+    }>(),
     translationStatus: text("translationStatus", {
       enum: ["pending", "failure", "success"],
     }),
