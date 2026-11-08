@@ -271,3 +271,22 @@ describe("mixArms", () => {
     expect(a).toEqual(b);
   });
 });
+
+it("presents selected articles by relevance after reserving exploration seats", () => {
+  const candidates = pool(100).map((c, i) => ({
+    ...c,
+    isTrialDomain: i > 90,
+    profileIndependent: i % 2 === 0,
+  }));
+  const selected = mixArms(candidates, {
+    size: 20,
+    shares: ROLLED_OUT,
+    rng: makeRng(3),
+  });
+  expect(selected.some((s) => s.arm === "trial")).toBe(true);
+  expect(selected.some((s) => s.arm === "random")).toBe(true);
+  const scores = selected.map(
+    (s) => candidates.find((c) => c.id === s.candidateId)!.score,
+  );
+  expect(scores).toEqual([...scores].sort((a, b) => b - a));
+});

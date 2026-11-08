@@ -1,5 +1,5 @@
 import { createId } from "@paralleldrive/cuid2";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 
 import { db } from "@karakeep/db";
 import {
@@ -134,6 +134,46 @@ export async function runBootstrap(
     imported += inserted.length;
   }
 
+  // A manual save can already exist in the collected pool under the same URL.
+  // Link it instead of losing the save to the URL uniqueness constraint.
+  // Candidates already linked by read_intent are deliberately left alone:
+  // opening an article for reading must not turn into a synthetic saved event.
+  let linked = 0;
+  const byHash = new Map(values.map((value) => [value.urlHash, value]));
+  for (const batch of chunk([...byHash.keys()], IN_CLAUSE_CHUNK)) {
+    const existing = await db
+      .select({ id: recCandidates.id, urlHash: recCandidates.urlHash })
+      .from(recCandidates)
+      .where(
+        and(
+          eq(recCandidates.userId, userId),
+          isNull(recCandidates.bookmarkId),
+          inArray(recCandidates.urlHash, batch),
+        ),
+      );
+    for (const candidate of existing) {
+      const bookmark = byHash.get(candidate.urlHash)!;
+      const updated = await db
+        .update(recCandidates)
+        .set({
+          bookmarkId: bookmark.bookmarkId,
+          status: "promoted",
+          origin: "bootstrap",
+        })
+        .where(
+          and(
+            eq(recCandidates.id, candidate.id),
+            isNull(recCandidates.bookmarkId),
+          ),
+        )
+        .returning({ id: recCandidates.id });
+      if (updated.length) {
+        importedByBookmark.set(bookmark.bookmarkId, candidate.id);
+        linked++;
+      }
+    }
+  }
+
   // 既に候補として入っているブックマークも拾い直す。
   //
   // `onConflictDoNothing` の `returning` は**新規に挿入された行しか返さない**。
@@ -177,12 +217,12 @@ export async function runBootstrap(
     now,
   );
 
-  if (imported > 0) {
+  if (imported > 0 || linked > 0) {
     await RecommenderEmbedQueue.enqueue({ userId }, { groupId: userId });
   }
 
   logger.info(
-    `[recommender][bootstrap][${jobId}] scanned ${rows.length}, imported ${imported}, ${positives} positives`,
+    `[recommender][bootstrap][${jobId}] scanned ${rows.length}, imported ${imported}, linked ${linked} existing candidates, ${positives} positives`,
   );
   return { scanned: rows.length, imported, positives };
 }
@@ -279,8 +319,9 @@ async function writeBootstrapImpressions(
   savedAtByBookmark: Map<string, Date>,
   now: Date,
 ): Promise<number> {
-  // 既に impression がある候補は飛ばす。冪等化で既存候補も対象に含めるように
-  // したので、ここで弾かないと再実行のたびに正例が二重に積み上がる。
+  // An ordinary briefing impression is not evidence that the save was recorded.
+  // Only skip candidates with an existing saved event, preserving idempotency
+  // while recovering manual saves of articles previously shown in a briefing.
   const already = new Set<string>();
   for (const batch of chunk(
     [...importedByBookmark.values()],
@@ -289,9 +330,14 @@ async function writeBootstrapImpressions(
     const rows = await db
       .select({ candidateId: recImpressions.candidateId })
       .from(recImpressions)
+      .innerJoin(
+        recFeedbackEvents,
+        eq(recFeedbackEvents.impressionId, recImpressions.id),
+      )
       .where(
         and(
           eq(recImpressions.userId, userId),
+          eq(recFeedbackEvents.eventType, "saved"),
           inArray(recImpressions.candidateId, batch),
         ),
       );

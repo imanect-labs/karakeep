@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 
 import { db } from "@karakeep/db";
 import {
@@ -7,6 +7,7 @@ import {
   recDomains,
   recFeedbackEvents,
   recImpressions,
+  recModels,
   recSources,
 } from "@karakeep/db/schema";
 import type { ArmShares, RankableCandidate } from "@karakeep/recommender";
@@ -17,6 +18,8 @@ import {
   makeRng,
   maxSimilarity,
   mixArms,
+  pairwiseScore,
+  PAIRWISE_FEATURES,
   scoreHeuristic,
   validateShares,
 } from "@karakeep/recommender";
@@ -98,6 +101,31 @@ export async function runRank(
 
   const bundle = await refreshProfiles(userId);
   const lookupPreference = clusterPreferenceLookup(bundle.clusterPreferences);
+  // Keep the oldest pending challenger fixed across days for prospective evaluation.
+  // Daily retraining must not reset its seven-day evaluation window.
+  const shadowModels = await db
+    .select()
+    .from(recModels)
+    .where(
+      and(
+        eq(recModels.userId, userId),
+        eq(recModels.kind, "logreg"),
+        eq(recModels.status, "shadow"),
+        eq(recModels.featureSchemaVersion, "heuristic-v1"),
+      ),
+    )
+    .orderBy(asc(recModels.trainedAt))
+    .limit(1);
+  const shadow = shadowModels[0];
+  const params = shadow?.params as { weights?: unknown } | null | undefined;
+  const shadowWeights =
+    Array.isArray(params?.weights) &&
+    params.weights.length === PAIRWISE_FEATURES.length &&
+    params.weights.every(
+      (v: unknown) => typeof v === "number" && Number.isFinite(v),
+    )
+      ? (params.weights as number[])
+      : null;
 
   const scored = candidates.map((candidate) => {
     const embedding = candidate.embedding
@@ -124,7 +152,13 @@ export async function runRank(
       bundle.profiles,
       now,
     );
-    return { candidate, result };
+    const shadowFeatures: Record<string, number> = {};
+    if (shadow && shadowWeights) {
+      const score = pairwiseScore(result.contributions, shadowWeights);
+      if (Number.isFinite(score))
+        shadowFeatures[`shadow:${shadow.version}`] = score;
+    }
+    return { candidate, result, shadowFeatures };
   });
 
   const rankable: RankableCandidate[] = scored.map(({ candidate, result }) => ({
@@ -158,7 +192,7 @@ export async function runRank(
     now,
   );
 
-  const shadow = await writeShadowImpressions(
+  const shadowCount = await writeShadowImpressions(
     userId,
     briefingId,
     scored,
@@ -181,12 +215,14 @@ export async function runRank(
 
   await enqueueDigest(userId, briefingId, date, jobId);
 
-  log(`selected ${selections.length}, logged ${shadow} unshown candidates`);
+  log(
+    `selected ${selections.length}, logged ${shadowCount} unshown candidates`,
+  );
   return {
     briefingId,
     modelVersion: MODEL_VERSION_HEURISTIC,
     shown: selections.length,
-    shadow,
+    shadow: shadowCount,
     candidatesConsidered: candidates.length,
   };
 }
@@ -293,6 +329,7 @@ async function upsertBriefing(
 }
 
 interface ScoredCandidate {
+  shadowFeatures?: Record<string, number>;
   candidate: Awaited<ReturnType<typeof loadRankableCandidates>>[number];
   result: ReturnType<typeof scoreHeuristic>;
 }
@@ -355,6 +392,7 @@ async function writeImpressions(
         modelVersion: MODEL_VERSION_HEURISTIC,
         features: {
           ...scored.result.contributions,
+          ...scored.shadowFeatures,
           rank: selection.rank,
         },
         featureSchemaVersion: MODEL_VERSION_HEURISTIC,
@@ -403,7 +441,7 @@ async function writeShadowImpressions(
       // 選ばれなかったので、この候補の選出確率は記録できない。
       propensity: null,
       modelVersion: MODEL_VERSION_HEURISTIC,
-      features: s.result.contributions,
+      features: { ...s.result.contributions, ...s.shadowFeatures },
       featureSchemaVersion: MODEL_VERSION_HEURISTIC,
       profileHash: profileHashValue,
       domainStatusAtImpression: s.candidate.domainStatus,

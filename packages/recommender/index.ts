@@ -15,3 +15,4 @@ export * from "./src/discovery/robots";
 export * from "./src/embedding/format";
 export * from "./src/embedding/client";
 export * from "./src/sources";
+export * from "./src/model/pairwise";

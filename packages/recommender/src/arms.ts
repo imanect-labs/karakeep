@@ -271,7 +271,12 @@ export function mixArms(
     commit,
   );
 
-  return selections;
+  // Reserve exploration seats first, then present the chosen articles by relevance.
+  // Sampling order must not force trial/random articles onto the first page.
+  const scores = new Map(candidates.map((c) => [c.id, c.score]));
+  return selections
+    .sort((a, b) => scores.get(b.candidateId)! - scores.get(a.candidateId)!)
+    .map((selection, index) => ({ ...selection, rank: index + 1 }));
 }
 
 /**
