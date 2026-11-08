@@ -78,21 +78,18 @@ export async function runTrain(userId: string, jobId: string) {
   log(
     `eligible examined=${items.length}, distinct positives=${positives}, days=${days}, pairs=${pairs.length}`,
   );
-  if (
-    items.length < 2000 ||
-    positives < 100 ||
-    days < 60 ||
-    pairs.length < 3000
-  ) {
+  if (items.length < 100 || positives < 20 || days < 5 || pairs.length < 100) {
     log(
-      "skipped: need 2000 examined, 100 distinct strong positives, 60 observed days and 3000 pairs; unseen and unfinalized impressions are excluded",
+      "skipped: shadow learning needs 100 examined, 20 distinct strong positives, 5 observed days and 100 pairs; unseen and unfinalized impressions are excluded",
     );
     return;
   }
-  const lambda = selectRegularization(items);
-  if (lambda === null) {
-    log("skipped: no usable expanding-window validation folds");
-    return;
+  const selectedLambda = selectRegularization(items);
+  const lambda = selectedLambda ?? 1;
+  if (selectedLambda === null) {
+    log(
+      "no usable expanding-window folds: using prespecified strong L2 regularization (lambda=1) for shadow learning only",
+    );
   }
   const weights = fitPairwise(pairs, lambda);
   if (!weights.every(Number.isFinite))
@@ -133,6 +130,9 @@ export async function runTrain(userId: string, jobId: string) {
     metrics: {
       pairs: pairs.length,
       observedDays: days,
+      regularizationCrossValidated: selectedLambda === null ? 0 : 1,
+      validationPairs: validation.pairs,
+      validationBriefings: validation.briefings,
       validationPairAccuracy: validation.pairAccuracy,
       validationNdcg20: validation.ndcg20,
       heuristicPairAccuracy: heuristic.pairAccuracy,

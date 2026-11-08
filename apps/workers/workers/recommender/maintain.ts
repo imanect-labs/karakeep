@@ -12,6 +12,7 @@ import serverConfig from "@karakeep/shared/config";
 import logger from "@karakeep/shared/logger";
 
 import { purgeArticleCache } from "./articleCache";
+import { runBootstrap } from "./bootstrap";
 import { chunk, IN_CLAUSE_CHUNK, posteriorMean } from "./shared";
 
 export interface MaintainResult {
@@ -54,9 +55,12 @@ export async function runMaintain(
   const purgedArticles = await purgeArticleCache(now, cfg.candidatePurgeDays);
   const retiered = await retierDomains(userId);
   const syncedSources = await syncSeedSources(userId);
+  // Enrollment only imports the library once. Keep later manual saves in the
+  // profile too; bootstrap is idempotent and queues new embeddings before rank.
+  const library = await runBootstrap(userId, undefined, jobId);
 
   logger.info(
-    `[recommender][maintain][${jobId}] expired ${expiredRows.length}, purged ${purged} candidates and ${purgedArticles} cached articles, retiered ${retiered} domains, synced ${syncedSources} seed sources`,
+    `[recommender][maintain][${jobId}] expired ${expiredRows.length}, purged ${purged} candidates and ${purgedArticles} cached articles, retiered ${retiered} domains, synced ${syncedSources} seed sources, imported ${library.imported} library bookmarks`,
   );
   return {
     expired: expiredRows.length,

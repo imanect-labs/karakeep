@@ -71,4 +71,37 @@ describe("runTrain", () => {
     expect(model.params.weights.every(Number.isFinite)).toBe(true);
     expect(model.metrics.validationPairAccuracy).toBe(1);
   });
+
+  it("starts regularized shadow learning before the production promotion thresholds", async () => {
+    mock.rows = Array.from({ length: 10 }, (_, day) =>
+      Array.from({ length: 15 }, (_, index) => ({
+        id: `${day}:${index}`,
+        candidateId: `${day}:${index}`,
+        briefingId: `b${day}`,
+        date: new Date(Date.UTC(2026, 7, day + 1)).toISOString().slice(0, 10),
+        features: Object.fromEntries(
+          PAIRWISE_FEATURES.map((key) => [
+            key,
+            key === "stable"
+              ? index < 2
+                ? 1
+                : 0
+              : key === "rank"
+                ? index + 1
+                : 0,
+          ]),
+        ),
+        event: index < 2 ? "saved" : "viewed",
+      })),
+    ).flat();
+    await runTrain("user", "job");
+    expect(mock.insert).toHaveBeenCalledOnce();
+    expect(mock.insert.mock.calls[0][0]).toMatchObject({
+      status: "shadow",
+      positiveCount: 20,
+      trainSampleCount: 150,
+      params: { lambda: 1 },
+      metrics: { regularizationCrossValidated: 0 },
+    });
+  });
 });
