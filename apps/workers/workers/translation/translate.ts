@@ -17,6 +17,7 @@ import { BookmarkTypes } from "@karakeep/shared/types/bookmarks";
 import { Bookmark } from "@karakeep/trpc/models/bookmarks";
 
 import { buildLocalTranslator, translateChunkLocally } from "./localChunk";
+import { streamingProse } from "./streamingPreview";
 import {
   cjkRatio,
   findChunkProblems,
@@ -300,6 +301,7 @@ export async function runTranslation(
           }),
       translationTotalChunks: chunks.length,
       translationDoneChunks: doneChunks,
+      translationPreview: null,
     })
     .where(eq(bookmarkLinks.id, bookmarkId));
 
@@ -356,10 +358,35 @@ export async function runTranslation(
       // Sampling again clears it, so keep the cleanest attempt.
       let best: { text: string; problems: string[] } | null = null;
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        await db
+          .update(bookmarkLinks)
+          .set({ translationPreview: null })
+          .where(eq(bookmarkLinks.id, bookmarkId));
+        let publishedAt = 0;
         const result = await inferenceClient.inferFromText(prompt, {
           schema: null,
           abortSignal: job.abortSignal,
           sessionId: `karakeep-translation-${bookmarkId}`,
+          ...(!hasReadableTranslation
+            ? {
+                onChunk: async (partial: string) => {
+                  job.abortSignal.throwIfAborted();
+                  if (Date.now() - publishedAt < 500) return;
+                  publishedAt = Date.now();
+                  const text = streamingProse(partial);
+                  if (!text) return;
+                  await db
+                    .update(bookmarkLinks)
+                    .set({
+                      translationPreview: {
+                        text,
+                        sourceEnd: sourceOffset + chunk.length,
+                      },
+                    })
+                    .where(eq(bookmarkLinks.id, bookmarkId));
+                },
+              }
+            : {}),
         });
         totalTokens += result.totalTokens ?? 0;
         if (!result.response) {
@@ -413,6 +440,7 @@ export async function runTranslation(
               translationSourceOffset: sourceOffset,
             }),
         translationDoneChunks: doneChunks,
+        translationPreview: null,
       })
       .where(eq(bookmarkLinks.id, bookmarkId));
   }

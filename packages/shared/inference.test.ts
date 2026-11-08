@@ -19,6 +19,17 @@ vi.mock("openai", () => {
           ) => {
             capturedBodies.push(body);
             capturedRequestOptions.push(options);
+            if (body.stream) {
+              return {
+                controller: { abort: vi.fn() },
+                async *[Symbol.asyncIterator]() {
+                  yield { choices: [{ delta: { role: "assistant" } }] };
+                  yield { choices: [{ delta: { content: "日本" } }] };
+                  yield { choices: [{ delta: { content: "語" } }] };
+                  yield { choices: [], usage: { total_tokens: 17 } };
+                },
+              };
+            }
             return {
               choices: [{ message: { content: "{}" } }],
               usage: { total_tokens: 1 },
@@ -56,6 +67,30 @@ function makeConfig(
 describe("OpenAIInferenceClient response_format", () => {
   beforeEach(() => {
     capturedBodies.length = 0;
+  });
+
+  it("delivers partial text before the stream ends and collects the usage-only event", async () => {
+    const client = new OpenAIInferenceClient(makeConfig("plain"));
+    const partials: string[] = [];
+    const result = await client.inferFromText("translate", {
+      onChunk: (text) => {
+        partials.push(text);
+      },
+    });
+    expect(partials).toEqual(["日本", "日本語"]);
+    expect(result).toEqual({ response: "日本語", totalTokens: 17 });
+    expect(capturedBodies[0].stream_options).toEqual({ include_usage: true });
+  });
+
+  it("propagates a cancelled consumer rather than returning a partial success", async () => {
+    const client = new OpenAIInferenceClient(makeConfig("plain"));
+    await expect(
+      client.inferFromText("translate", {
+        onChunk: () => {
+          throw new Error("cancelled");
+        },
+      }),
+    ).rejects.toThrow("cancelled");
   });
 
   it("omits response_format for schema-less text inference in json mode", async () => {

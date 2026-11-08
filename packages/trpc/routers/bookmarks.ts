@@ -737,7 +737,7 @@ export const bookmarksAppRouter = router({
         });
       const claimed = await ctx.db
         .update(bookmarkLinks)
-        .set({ translationStatus: "pending" })
+        .set({ translationStatus: "pending", translationPreview: null })
         .where(
           and(
             eq(bookmarkLinks.id, input.bookmarkId),

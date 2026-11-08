@@ -17,6 +17,7 @@ import {
 import { useReadingProgress } from "@karakeep/shared-react/hooks/reading-progress";
 import { useTRPC } from "@karakeep/shared-react/trpc";
 import { BookmarkTypes } from "@karakeep/shared/types/bookmarks";
+import { readerTranslationHtml } from "@karakeep/shared/utils/translation";
 
 import ReadingProgressBanner from "./ReadingProgressBanner";
 
@@ -64,6 +65,7 @@ export default function ReaderView({
             ? {
                 htmlContent: data.content.htmlContent ?? null,
                 translatedContent: data.content.translatedContent ?? null,
+                translationPreview: data.content.translationPreview ?? null,
                 translationStatus: data.content.translationStatus ?? null,
                 translationTotalChunks:
                   data.content.translationTotalChunks ?? null,
@@ -79,7 +81,7 @@ export default function ReaderView({
           const d = query.state.data;
           return d?.content.type === BookmarkTypes.LINK &&
             d.content.translationStatus === "pending"
-            ? 2000
+            ? 500
             : false;
         },
       },
@@ -92,7 +94,8 @@ export default function ReaderView({
   >(null);
   const isTranslating = linkContent?.translationStatus === "pending";
   // Partial output counts: the reader renders whatever chunks are done so far.
-  const hasTranslation = !!linkContent?.translatedContent;
+  const preview = isTranslating ? linkContent?.translationPreview : null;
+  const hasTranslation = !!linkContent?.translatedContent || !!preview?.text;
   // Default to the translation whenever there is one. Falling back to the
   // original when a run fails would yank a half-read Japanese article back to
   // English, which is worse than showing what did get translated.
@@ -104,13 +107,13 @@ export default function ReaderView({
   const isIncomplete =
     isTranslating || linkContent?.translationStatus === "failure";
   const partialWithRemainder = () => {
-    const translated = linkContent?.translatedContent ?? "";
-    const offset = linkContent?.translationSourceOffset;
-    const source = linkContent?.htmlContent ?? "";
-    if (!isIncomplete || offset == null || offset >= source.length) {
-      return translated;
-    }
-    return translated + source.slice(offset);
+    return readerTranslationHtml({
+      translated: linkContent?.translatedContent ?? "",
+      source: linkContent?.htmlContent ?? "",
+      sourceOffset: linkContent?.translationSourceOffset ?? null,
+      incomplete: isIncomplete,
+      preview,
+    });
   };
   const displayContent =
     showTranslation && hasTranslation
@@ -284,6 +287,7 @@ export default function ReaderView({
       <div className="flex h-full flex-col">
         {translationToggle}
         <ScrollProgressTracker
+          trackingEnabled={!isTranslating || !showTranslation}
           onSavePosition={onSavePosition}
           onScrollPositionChange={onScrollPositionChange}
           restorePosition={restorePosition}

@@ -24,6 +24,26 @@ beforeEach<CustomTestContext>(async ({ db }) => {
 });
 afterEach(() => vi.restoreAllMocks());
 
+test<CustomTestContext>("streams preview state only when article content is requested", async ({
+  db,
+  apiCallers,
+}) => {
+  const preview = { text: "途中の日本語", sourceEnd: 24 };
+  await db
+    .update(bookmarkLinks)
+    .set({ translationStatus: "pending", translationPreview: preview });
+  const detail = await apiCallers[0].bookmarks.getBookmark({
+    bookmarkId: "body",
+    includeContent: true,
+  });
+  expect(detail.content).toMatchObject({ translationPreview: preview });
+  const metadata = await apiCallers[0].bookmarks.getBookmark({
+    bookmarkId: "body",
+    includeContent: false,
+  });
+  expect(metadata.content).toMatchObject({ translationPreview: null });
+});
+
 test<CustomTestContext>("explicit requests queue once and retain partial translation for resume", async ({
   db,
   apiCallers,
