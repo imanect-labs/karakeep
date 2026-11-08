@@ -1,5 +1,5 @@
 import { experimental_trpcMiddleware, TRPCError } from "@trpc/server";
-import { and, eq, gt, inArray, like, lt, or } from "drizzle-orm";
+import { and, eq, gt, inArray, like, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import {
@@ -27,6 +27,7 @@ import {
   QueuePriority,
   QuotaService,
   triggerSearchReindex,
+  TranslationQueue,
 } from "@karakeep/shared-server";
 import { SUPPORTED_BOOKMARK_ASSET_TYPES } from "@karakeep/shared/assetdb";
 import serverConfig from "@karakeep/shared/config";
@@ -708,6 +709,55 @@ export const bookmarksAppRouter = router({
       addLogFields<"bookmark.delete">({ "bookmark.id": input.bookmarkId });
       const bookmark = await Bookmark.fromId(ctx, input.bookmarkId, false);
       await bookmark.delete();
+    }),
+  translateBookmark: bookmarksProcedure
+    .input(z.object({ bookmarkId: z.string() }))
+    .use(ensureBookmarkOwnership)
+    .mutation(async ({ input, ctx }) => {
+      const link = await ctx.db.query.bookmarkLinks.findFirst({
+        where: eq(bookmarkLinks.id, input.bookmarkId),
+      });
+      if (!link)
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "記事の本文だけを翻訳できます",
+        });
+      if (link.translationStatus === "success" && link.translatedContent)
+        return;
+      if (link.translationStatus === "pending") return;
+      if (!link.htmlContent?.trim() && !link.contentAssetId)
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "本文の取得後に翻訳できます",
+        });
+      if (!InferenceClientFactory.build())
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "翻訳サービスが設定されていません",
+        });
+      const claimed = await ctx.db
+        .update(bookmarkLinks)
+        .set({ translationStatus: "pending" })
+        .where(
+          and(
+            eq(bookmarkLinks.id, input.bookmarkId),
+            sql`${bookmarkLinks.translationStatus} IS NOT 'pending'`,
+          ),
+        )
+        .returning({ id: bookmarkLinks.id });
+      if (!claimed.length) return;
+      try {
+        await TranslationQueue.enqueue(
+          { bookmarkId: input.bookmarkId, requestedByUser: true },
+          { groupId: ctx.user.id },
+        );
+      } catch (error) {
+        await ctx.db
+          .update(bookmarkLinks)
+          .set({ translationStatus: "failure" })
+          .where(eq(bookmarkLinks.id, input.bookmarkId));
+        throw error;
+      }
     }),
   recrawlBookmark: bookmarksProcedure
     .use(

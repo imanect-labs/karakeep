@@ -139,6 +139,7 @@ export const OpenAIQueue = createDeferredQueue<ZOpenAIRequest>("openai_queue", {
 // queue so its many chunk-level LLM calls don't starve tagging/summarization.
 export const zTranslationRequestSchema = z.object({
   bookmarkId: z.string(),
+  requestedByUser: z.boolean().optional(),
 });
 export type ZTranslationRequest = z.infer<typeof zTranslationRequestSchema>;
 

@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { workerStatsCounter } from "metrics";
 import { withWorkerEventLog, withWorkerTracing } from "workerTracing";
 
@@ -39,17 +39,20 @@ async function attemptMarkStatus(
 export class TranslationWorker {
   static async build() {
     logger.info("Starting translation worker ...");
-    const worker = (await getQueueClient())!.createRunner<ZTranslationRequest>(
+    const worker = (await getQueueClient())!.createRunner<
+      ZTranslationRequest,
+      boolean
+    >(
       TranslationQueue,
       {
         run: withWorkerTracing(
           "translationWorker.run",
           withWorkerEventLog("translationWorker.run", runTranslationJob),
         ),
-        onComplete: async (job) => {
+        onComplete: async (job, translated) => {
           workerStatsCounter.labels("translation", "completed").inc();
           logger.info(`[translation][${job.id}] Completed successfully`);
-          await attemptMarkStatus(job.data, "success");
+          if (translated) await attemptMarkStatus(job.data, "success");
         },
         onError: async (job) => {
           workerStatsCounter.labels("translation", "failed").inc();
@@ -73,16 +76,8 @@ export class TranslationWorker {
   }
 }
 
-async function runTranslationJob(job: DequeuedJob<ZTranslationRequest>) {
+export async function runTranslationJob(job: DequeuedJob<ZTranslationRequest>) {
   const jobId = job.id;
-
-  const inferenceClient = InferenceClientFactory.build();
-  if (!inferenceClient) {
-    logger.debug(
-      `[translation][${jobId}] No inference client configured, nothing to do now`,
-    );
-    return;
-  }
 
   const request = zTranslationRequestSchema.safeParse(job.data);
   if (!request.success) {
@@ -91,5 +86,28 @@ async function runTranslationJob(job: DequeuedJob<ZTranslationRequest>) {
     );
   }
 
+  // Old automatic jobs must not run after automatic translation is disabled.
+  // Explicit requests still use the same worker and resume existing chunks.
+  if (!serverConfig.translation.enableAuto && !request.data.requestedByUser) {
+    await db
+      .update(bookmarkLinks)
+      .set({ translationStatus: null })
+      .where(
+        and(
+          eq(bookmarkLinks.id, request.data.bookmarkId),
+          eq(bookmarkLinks.translationStatus, "pending"),
+        ),
+      );
+    return false;
+  }
+  const inferenceClient = InferenceClientFactory.build();
+  if (!inferenceClient)
+    throw new Error("Translation provider is not configured");
+
+  await db
+    .update(bookmarkLinks)
+    .set({ translationStatus: "pending" })
+    .where(eq(bookmarkLinks.id, request.data.bookmarkId));
   await runTranslation(request.data.bookmarkId, job, inferenceClient);
+  return true;
 }

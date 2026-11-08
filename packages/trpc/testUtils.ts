@@ -124,6 +124,9 @@ export function defaultBeforeEach(seedDB = true) {
         RecommenderQueue: {
           enqueue: vi.fn(),
         },
+        TranslationQueue: {
+          enqueue: vi.fn(),
+        },
         RecommenderEmbedQueue: {
           enqueue: vi.fn(),
         },

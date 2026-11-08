@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { FullPageSpinner } from "@/components/ui/full-page-spinner";
+import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/sonner";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/lib/i18n/client";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileX, Languages } from "lucide-react";
 
 import BookmarkHTMLHighlighter from "@karakeep/shared-react/components/BookmarkHtmlHighlighter";
@@ -34,6 +35,18 @@ export default function ReaderView({
 }) {
   const { t } = useTranslation();
   const api = useTRPC();
+  const queryClient = useQueryClient();
+  const translate = useMutation(
+    api.bookmarks.translateBookmark.mutationOptions({
+      onSuccess: () => {
+        void queryClient.invalidateQueries(
+          api.bookmarks.getBookmark.pathFilter(),
+        );
+      },
+      onError: (error) =>
+        toast({ variant: "destructive", description: error.message }),
+    }),
+  );
   const { data: highlights } = useQuery(
     api.highlights.getForBookmark.queryOptions({
       bookmarkId,
@@ -189,9 +202,29 @@ export default function ReaderView({
   ) : null;
 
   const translationToggle =
-    hasTranslation || isTranslating ? (
+    hasTranslation ||
+    isTranslating ||
+    (!readOnly && linkContent?.htmlContent) ? (
       <div className="flex items-center justify-end gap-2 px-1 pb-2">
         {translationProgress}
+        {!readOnly &&
+          !isTranslating &&
+          linkContent?.htmlContent &&
+          linkContent.translationStatus !== "success" && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={translate.isPending}
+              onClick={() => translate.mutate({ bookmarkId })}
+            >
+              <Languages className="mr-1.5 size-4" />
+              {translate.isPending
+                ? "翻訳を開始しています…"
+                : linkContent.translationStatus === "failure"
+                  ? "全文翻訳を再試行"
+                  : "全文を日本語に翻訳"}
+            </Button>
+          )}
         {hasTranslation && (
           <div className="flex overflow-hidden rounded-md border text-xs">
             <button
