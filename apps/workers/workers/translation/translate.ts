@@ -191,13 +191,6 @@ export async function runTranslation(
 ) {
   const jobId = job.id;
 
-  if (!serverConfig.translation.enableAuto) {
-    logger.debug(
-      `[translation][${jobId}] Skipping translation for bookmark "${bookmarkId}": disabled in config.`,
-    );
-    return;
-  }
-
   const bookmarkData = await fetchLinkForTranslation(bookmarkId);
   if (bookmarkData.type !== BookmarkTypes.LINK || !bookmarkData.link) {
     logger.debug(
