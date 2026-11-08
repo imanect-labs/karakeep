@@ -8,6 +8,7 @@ export * from "./src/arms";
 export * from "./src/profile";
 export * from "./src/reward";
 export * from "./src/model/heuristic";
+export * from "./src/model/explicitTopics";
 export * from "./src/domain/lifecycle";
 export * from "./src/domain/quality";
 export * from "./src/discovery/links";

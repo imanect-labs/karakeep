@@ -8,6 +8,7 @@ import {
   recImpressions,
   recArticleCache,
   recFeedbackEvents,
+  recProfiles,
   users,
   bookmarks,
 } from "@karakeep/db/schema";
@@ -36,6 +37,61 @@ beforeEach(async () => {
 });
 
 describe("Briefing previews and translation", () => {
+  test<CustomTestContext>("isolates explicit topics, preserves behavioral vectors and writes no feedback", async ({
+    db,
+    apiCallers,
+  }) => {
+    const [owner, other] = await db.select().from(users);
+    const stable = Buffer.from([1, 2, 3, 4]);
+    await db
+      .insert(recProfiles)
+      .values({ userId: owner.id, stableEmbedding: stable });
+    await apiCallers[0].recommender.setExplicitTopics({
+      topics: ["  インフラ  ", "低レイヤー", "インフラ"],
+    });
+    expect(
+      (await apiCallers[0].recommender.getInterestState()).explicitTopics,
+    ).toEqual(["インフラ", "低レイヤー"]);
+    expect(
+      (await apiCallers[1].recommender.getInterestState()).explicitTopics,
+    ).toEqual([]);
+    expect(
+      (
+        await db
+          .select()
+          .from(recProfiles)
+          .where(eq(recProfiles.userId, owner.id))
+      )[0].stableEmbedding,
+    ).toEqual(stable);
+    expect(await db.select().from(recFeedbackEvents)).toHaveLength(0);
+    expect(await db.select().from(recImpressions)).toHaveLength(0);
+    await apiCallers[1].recommender.setExplicitTopics({ topics: ["別の関心"] });
+    expect(
+      (
+        await db
+          .select()
+          .from(recProfiles)
+          .where(eq(recProfiles.userId, other.id))
+      )[0].explicitTopics,
+    ).toEqual(["別の関心"]);
+    await apiCallers[0].recommender.setExplicitTopics({ topics: [] });
+    expect(
+      (await apiCallers[0].recommender.getInterestState()).explicitTopics,
+    ).toEqual([]);
+    await expect(
+      apiCallers[0].recommender.setExplicitTopics({ topics: [""] }),
+    ).rejects.toThrow();
+    await expect(
+      apiCallers[0].recommender.setExplicitTopics({
+        topics: Array(13).fill("topic"),
+      }),
+    ).rejects.toThrow();
+    await expect(
+      apiCallers[0].recommender.setExplicitTopics({
+        topics: ["x".repeat(201)],
+      }),
+    ).rejects.toThrow();
+  });
   async function candidate(db: CustomTestContext["db"]) {
     const [owner] = await db.select().from(users);
     await db.insert(recCandidates).values({

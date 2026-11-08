@@ -11,11 +11,15 @@ import {
 import type { Profiles, ProfileSample } from "@karakeep/recommender";
 import {
   buildProfiles,
+  embedDocuments,
   clusterPreferenceScore,
   deserializeVector,
   profileHash,
   serializeVector,
 } from "@karakeep/recommender";
+import { EmbeddingClientFactory } from "@karakeep/shared/embedding";
+import serverConfig from "@karakeep/shared/config";
+import logger from "@karakeep/shared/logger";
 
 import { chunk, IN_CLAUSE_CHUNK } from "./shared";
 
@@ -53,6 +57,8 @@ const SAMPLE_WEIGHTS: Record<string, number> = {
 const PROFILE_WINDOW_DAYS = 180;
 
 export interface ProfileBundle {
+  explicitTopicVectors: Float32Array[];
+  explicitTopicModelId: string | null;
   profiles: Profiles;
   hash: string;
   /** クラスタ id → 選好スコア。 */
@@ -77,7 +83,34 @@ export async function refreshProfiles(userId: string): Promise<ProfileBundle> {
   const positives = await loadSamples(userId, since, "positive");
   const negatives = await loadSamples(userId, since, "negative");
   const profiles = buildProfiles(positives, negatives, now);
-  const hash = profileHash(profiles);
+  const profile = await db.query.recProfiles.findFirst({
+    where: eq(recProfiles.userId, userId),
+    columns: { explicitTopics: true },
+  });
+  let explicitTopicVectors: Float32Array[] = [];
+  let explicitTopicModelId: string | null = null;
+  if (profile?.explicitTopics?.length) {
+    try {
+      const client = EmbeddingClientFactory.build();
+      if (client) {
+        const embedded = await embedDocuments(
+          client,
+          profile.explicitTopics.map((topic) => ({
+            title: topic,
+            summary: topic,
+          })),
+          { dimensions: serverConfig.recommender.embeddingDimensions },
+        );
+        explicitTopicVectors = embedded.flatMap((e) => (e ? [e.vector] : []));
+        explicitTopicModelId = client.modelId;
+      }
+    } catch {
+      logger.warn(
+        "[recommender][profiles] Topic embedding unavailable; using behavioral profiles",
+      );
+    }
+  }
+  const hash = profileHash(profiles, explicitTopicVectors);
 
   const clusterPreferences = await loadClusterPreferences(userId);
   const clusterRecentImpressions = await loadClusterImpressions(userId, now);
@@ -119,6 +152,8 @@ export async function refreshProfiles(userId: string): Promise<ProfileBundle> {
     });
 
   return {
+    explicitTopicVectors,
+    explicitTopicModelId,
     profiles,
     hash,
     clusterPreferences,

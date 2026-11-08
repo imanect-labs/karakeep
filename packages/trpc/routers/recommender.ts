@@ -13,6 +13,7 @@ import {
   recDomains,
   recFeedbackEvents,
   recImpressions,
+  recProfiles,
   recSources,
 } from "@karakeep/db/schema";
 import { SEED_SOURCES } from "@karakeep/recommender";
@@ -641,10 +642,27 @@ export const recommenderAppRouter = router({
         );
     }),
 
+  setExplicitTopics: recommenderProcedure
+    .input(
+      z.object({ topics: z.array(z.string().trim().min(1).max(200)).max(12) }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const topics = [...new Set(input.topics)];
+      await ctx.db
+        .insert(recProfiles)
+        .values({ userId: ctx.user.id, explicitTopics: topics })
+        .onConflictDoUpdate({
+          target: recProfiles.userId,
+          set: { explicitTopics: topics, updatedAt: new Date() },
+        });
+      return { topics };
+    }),
+
   /** 「興味の現在地」パネル（FR-U-06）。 */
   getInterestState: recommenderProcedure
     .output(
       z.object({
+        explicitTopics: z.array(z.string()),
         topClusters: z.array(
           z.object({
             id: z.string(),
@@ -667,6 +685,10 @@ export const recommenderAppRouter = router({
       }),
     )
     .query(async ({ ctx }) => {
+      const profile = await ctx.db.query.recProfiles.findFirst({
+        where: eq(recProfiles.userId, ctx.user.id),
+        columns: { explicitTopics: true },
+      });
       const clusters = await ctx.db
         .select({
           id: recClusters.id,
@@ -712,6 +734,7 @@ export const recommenderAppRouter = router({
       ]);
 
       return {
+        explicitTopics: profile?.explicitTopics ?? [],
         topClusters: clusters.slice(0, 5),
         negativeClusters: clusters
           .filter((c) => c.score < 0.1)
