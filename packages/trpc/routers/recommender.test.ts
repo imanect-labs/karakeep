@@ -37,6 +37,39 @@ beforeEach(async () => {
 });
 
 describe("Briefing previews and translation", () => {
+  test<CustomTestContext>("explains the explicit topic contribution in the displayed briefing", async ({
+    db,
+    apiCallers,
+  }) => {
+    const owner = await candidate(db);
+    await db.insert(recBriefings).values({
+      id: "topic-briefing",
+      userId: owner.id,
+      briefingDate: "2026-11-09",
+      status: "ready",
+      modelVersion: "heuristic-v1+explicit-topics",
+    });
+    await db.insert(recImpressions).values({
+      id: "topic-impression",
+      userId: owner.id,
+      briefingId: "topic-briefing",
+      candidateId: "candidate",
+      rank: 1,
+      shown: true,
+      features: {
+        explicitTopics: 1,
+        stable: 0.2,
+        rank: 1,
+        "shadow:test": 99,
+      },
+    });
+    const briefing = await apiCallers[0].recommender.getBriefing({});
+    expect(briefing.items[0].reason).toContain(
+      "指定した関心のあるトピックに近い",
+    );
+    expect(briefing.items[0].reason).toContain("これまで");
+    expect(briefing.items[0].reason).not.toContain("99");
+  });
   test<CustomTestContext>("isolates explicit topics, preserves behavioral vectors and writes no feedback", async ({
     db,
     apiCallers,
