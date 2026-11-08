@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "@/components/ui/sonner";
 import { Button } from "@/components/ui/button";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Compass, Sparkles } from "lucide-react";
@@ -33,8 +34,24 @@ export default function BriefingView() {
   const [date, setDate] = useState<string | undefined>(undefined);
   const [page, setPage] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
+  const [translatingFor, setTranslatingFor] = useState<string | null>(null);
+  const pollUntil = useRef(Date.now() + 120_000);
 
-  const briefing = useQuery(api.recommender.getBriefing.queryOptions({ date }));
+  const briefing = useQuery(
+    api.recommender.getBriefing.queryOptions(
+      { date },
+      {
+        refetchInterval: (query) =>
+          Date.now() < pollUntil.current &&
+          query.state.data?.items.some(
+            (item) =>
+              item.previewPending || item.translationStatus === "pending",
+          )
+            ? 2500
+            : false,
+      },
+    ),
+  );
   const dates = useQuery(
     api.recommender.listBriefingDates.queryOptions({ limit: 14 }),
   );
@@ -80,6 +97,9 @@ export default function BriefingView() {
 
   const recordEvent = useMutation(
     api.recommender.recordEvent.mutationOptions({ onSuccess: invalidate }),
+  );
+  const translateArticle = useMutation(
+    api.recommender.translateArticle.mutationOptions({ onSuccess: invalidate }),
   );
   const markOpened = useMutation(api.recommender.markOpened.mutationOptions());
   const markViewed = useMutation(api.recommender.markViewed.mutationOptions());
@@ -138,26 +158,21 @@ export default function BriefingView() {
     items: visibleItems,
   } = paginate(items, PAGE_SIZE, page);
 
-  // ページを送ったら先頭へ。送った先の途中から始まると、読み飛ばしたのか
-  // 分からなくなる。
-  //
-  // **クリックハンドラの中で scrollIntoView を呼んではいけない。** そこで
-  // 呼ぶとまだ旧レイアウトのままで、smooth スクロールが走っている最中に
-  // React が 10 枚のカードを差し替える。ブラウザはスクロール先の高さが
-  // 変わるとアニメーションを打ち切るので、**一番下に留まったままになる**
-  // (実際にそうなっていた)。DOM が入れ替わったあとに動かす必要がある。
-  //
-  // sm 以上ではスクローラは window ではなく <main> (SidebarLayout の
-  // sm:overflow-y-auto)。scrollIntoView は直近のスクロール可能な祖先を
-  // 動かすので、スマホ (window スクロール) と両方これで足りる。
-  const isFirstRender = useRef(true);
+  // The desktop scroll container is <main>; mobile scrolls the document.
+  // Reset after the new cards commit, without a smooth animation that can be
+  // cancelled by layout changes. Also handles entering Briefing and date changes.
   useEffect(() => {
-    if (isFirstRender.current) {
-      isFirstRender.current = false;
-      return;
-    }
-    listRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, [page]);
+    if (!briefingId) return;
+    pollUntil.current = Date.now() + 120_000;
+    const frame = requestAnimationFrame(() => {
+      listRef.current?.focus({ preventScroll: true });
+      listRef.current
+        ?.closest("main")
+        ?.scrollTo({ top: 0, behavior: "instant" });
+      window.scrollTo({ top: 0, behavior: "instant" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [currentPage, briefingId]);
 
   /**
    * FR-U-04: 既存のブックマーク作成フローをそのまま呼ぶ。crawl・要約・
@@ -169,18 +184,51 @@ export default function BriefingView() {
    */
   const takeIntoLibrary = useCallback(
     async (item: BriefingItem, eventType: "saved" | "read_intent") => {
-      const bookmark = await createBookmark({
-        type: BookmarkTypes.LINK,
-        url: item.url,
-      });
-      await recordEvent.mutateAsync({
-        impressionId: item.impressionId,
-        eventType,
-        bookmarkId: bookmark.id,
-      });
+      const bookmarkId =
+        item.bookmarkId ??
+        (
+          await createBookmark({
+            type: BookmarkTypes.LINK,
+            url: item.url,
+          })
+        ).id;
+      if (!item.events.includes(eventType))
+        await recordEvent.mutateAsync({
+          impressionId: item.impressionId,
+          eventType,
+          bookmarkId,
+        });
+      return bookmarkId;
     },
     [createBookmark, recordEvent],
   );
+
+  const requestTranslation = async (item: BriefingItem) => {
+    setTranslatingFor(item.candidateId);
+    pollUntil.current = Date.now() + 120_000;
+    try {
+      await takeIntoLibrary(item, "read_intent");
+      await translateArticle.mutateAsync({ candidateId: item.candidateId });
+      invalidate();
+    } catch {
+      toast({
+        variant: "destructive",
+        description: "翻訳を開始できませんでした。もう一度お試しください。",
+      });
+    } finally {
+      setTranslatingFor(null);
+    }
+  };
+  const saveArticle = async (item: BriefingItem) => {
+    try {
+      await takeIntoLibrary(item, "saved");
+    } catch {
+      toast({
+        variant: "destructive",
+        description: "保存できませんでした。もう一度お試しください。",
+      });
+    }
+  };
 
   // enrollment も待つ。待たないと登録済みのユーザーにも読み込みのたび
   // 「はじめる」が一瞬出る。
@@ -194,21 +242,25 @@ export default function BriefingView() {
   return (
     <div className="flex flex-col gap-6">
       <header className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-        <div className="flex min-w-0 items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <Sparkles className="size-5 shrink-0" />
-          <h1 className="text-xl sm:text-2xl">今日の Briefing</h1>
-          {data?.briefingDate && (
-            <span className="shrink-0 text-sm text-muted-foreground">
-              {data.briefingDate}
-            </span>
-          )}
-          {items.length > 0 && (
-            <span className="shrink-0 text-sm tabular-nums text-muted-foreground">
-              {pageCount > 1
-                ? `${pageStart + 1}–${pageStart + visibleItems.length} / ${items.length} 件`
-                : `${items.length} 件`}
-            </span>
-          )}
+          <h1 className="whitespace-nowrap text-xl sm:text-2xl">
+            今日の Briefing
+          </h1>
+          <div className="flex basis-full flex-wrap items-center gap-x-3 gap-y-1 pl-7 sm:basis-auto sm:pl-0">
+            {data?.briefingDate && (
+              <span className="shrink-0 text-sm text-muted-foreground">
+                {data.briefingDate}
+              </span>
+            )}
+            {items.length > 0 && (
+              <span className="shrink-0 text-sm tabular-nums text-muted-foreground">
+                {pageCount > 1
+                  ? `${pageStart + 1}–${pageStart + visibleItems.length} / ${items.length} 件`
+                  : `${items.length} 件`}
+              </span>
+            )}
+          </div>
         </div>
         {/* 日付が 14 個並ぶと折り返して縦に伸びるので、スマホでは横スクロール。 */}
         {(dates.data?.length ?? 0) > 1 && (
@@ -239,8 +291,8 @@ export default function BriefingView() {
           <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
             技術ブログ・論文・Hacker News
             などの収集元をまとめて登録し、あなたのブックマークから興味を
-            読み取って、毎朝おすすめの記事を並べます。日本語の訳題と要約も
-            付きます。
+            読み取って、毎朝おすすめの記事を並べます。英語の記事は
+            ボタンから日本語に翻訳できます。
           </p>
           <Button
             size="lg"
@@ -275,13 +327,17 @@ export default function BriefingView() {
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
           <div
             ref={listRef}
-            className="flex min-w-0 scroll-mt-4 flex-col gap-3"
+            role="region"
+            aria-label="おすすめの記事"
+            tabIndex={-1}
+            className="flex min-w-0 scroll-mt-4 flex-col gap-6 focus:outline-none"
           >
             {visibleItems.map((item) => (
               <BriefingCard
                 key={item.impressionId}
                 item={item}
                 busy={recordEvent.isPending}
+                translating={translatingFor === item.candidateId}
                 onViewed={() => reportViewed(item.impressionId)}
                 onOpen={() =>
                   recordEvent.mutate({
@@ -289,10 +345,8 @@ export default function BriefingView() {
                     eventType: "clicked",
                   })
                 }
-                onSave={() => void takeIntoLibrary(item, "saved")}
-                onReadTranslated={() =>
-                  void takeIntoLibrary(item, "read_intent")
-                }
+                onSave={() => void saveArticle(item)}
+                onReadTranslated={() => void requestTranslation(item)}
                 onLike={() =>
                   recordEvent.mutate({
                     impressionId: item.impressionId,

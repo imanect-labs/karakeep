@@ -680,6 +680,13 @@
       "when": 1786306836820,
       "tag": "0096_recommender_shared_article_cache",
       "breakpoints": true
+    },
+    {
+      "idx": 97,
+      "version": "6",
+      "when": 1794160843357,
+      "tag": "0097_briefing_article_previews",
+      "breakpoints": true
     }
   ]
 }

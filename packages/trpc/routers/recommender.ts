@@ -1,7 +1,11 @@
 import { and, desc, eq, gte, inArray, isNotNull, lt, sql } from "drizzle-orm";
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 
 import {
+  bookmarkLinks,
+  bookmarks,
+  recArticleCache,
   recBriefings,
   recCandidates,
   recClusters,
@@ -12,6 +16,8 @@ import {
   recSources,
 } from "@karakeep/db/schema";
 import { SEED_SOURCES } from "@karakeep/recommender";
+import { InferenceClientFactory } from "@karakeep/shared/inference";
+import logger from "@karakeep/shared/logger";
 import { RecommenderQueue } from "@karakeep/shared-server";
 
 import type { AuthedContext } from "../index";
@@ -48,6 +54,12 @@ const zBriefingItem = z.object({
   // 日本語ダイジェスト（FR-U-13）。生成前・失敗時は null で、UI は原題に落ちる。
   titleJa: z.string().nullable(),
   summaryJa: z.string().nullable(),
+  imageUrl: z.string().nullable(),
+  lang: z.string().nullable(),
+  translationStatus: z
+    .enum(["pending", "success", "failure", "skipped"])
+    .nullable(),
+  previewPending: z.boolean(),
   domain: z.string().nullable(),
   domainStatus: z.string().nullable(),
   isTrialDomain: z.boolean(),
@@ -118,6 +130,13 @@ export const recommenderAppRouter = router({
           summary: recCandidates.summary,
           titleJa: recCandidates.titleJa,
           summaryJa: recCandidates.summaryJa,
+          imageUrl: recArticleCache.imageUrl,
+          bookmarkImage: bookmarkLinks.imageUrl,
+          lang: recCandidates.lang,
+          translationStatus: recCandidates.digestStatus,
+          translationRequestedAt: recCandidates.translationRequestedAt,
+          previewFetchedAt: recArticleCache.previewFetchedAt,
+          origin: recCandidates.origin,
           publishedAt: recCandidates.publishedAt,
           bookmarkId: recCandidates.bookmarkId,
           domain: recDomains.domain,
@@ -131,6 +150,11 @@ export const recommenderAppRouter = router({
         )
         .leftJoin(recDomains, eq(recDomains.id, recImpressions.domainId))
         .leftJoin(recClusters, eq(recClusters.id, recCandidates.clusterId))
+        .leftJoin(
+          recArticleCache,
+          eq(recArticleCache.urlHash, recCandidates.urlHash),
+        )
+        .leftJoin(bookmarkLinks, eq(bookmarkLinks.id, recCandidates.bookmarkId))
         .where(
           and(
             eq(recImpressions.briefingId, briefing.id),
@@ -140,6 +164,20 @@ export const recommenderAppRouter = router({
         .orderBy(recImpressions.rank);
 
       const events = new Map<string, string[]>();
+      if (
+        rows.some((row) => row.origin === "collected" && !row.previewFetchedAt)
+      ) {
+        // Backfills existing briefings without regenerating impressions or feedback.
+        await RecommenderQueue.enqueue(
+          { type: "preview", userId: ctx.user.id, briefingId: briefing.id },
+          {
+            groupId: ctx.user.id,
+            idempotencyKey: `rec:preview:${briefing.id}`,
+          },
+        ).catch((error) =>
+          logger.warn(`Briefing preview enqueue failed: ${String(error)}`),
+        );
+      }
       if (rows.length > 0) {
         const eventRows = await ctx.db
           .select({
@@ -180,6 +218,17 @@ export const recommenderAppRouter = router({
           summary: row.summary,
           titleJa: row.titleJa,
           summaryJa: row.summaryJa,
+          imageUrl: row.bookmarkImage ?? row.imageUrl,
+          lang: row.lang,
+          translationStatus: row.titleJa
+            ? "success"
+            : row.translationStatus === "pending" &&
+                (!row.translationRequestedAt ||
+                  Date.now() - row.translationRequestedAt.getTime() >
+                    5 * 60_000)
+              ? "failure"
+              : row.translationStatus,
+          previewPending: row.origin === "collected" && !row.previewFetchedAt,
           domain: row.domain,
           domainStatus: row.domainStatus,
           isTrialDomain: row.domainStatus === "trial",
@@ -388,6 +437,67 @@ export const recommenderAppRouter = router({
         );
     }),
 
+  translateArticle: recommenderProcedure
+    .input(z.object({ candidateId: z.string() }))
+    .output(z.void())
+    .mutation(async ({ input, ctx }) => {
+      const candidate = await ctx.db.query.recCandidates.findFirst({
+        where: and(
+          eq(recCandidates.id, input.candidateId),
+          eq(recCandidates.userId, ctx.user.id),
+        ),
+      });
+      if (!candidate) throw new TRPCError({ code: "NOT_FOUND" });
+      if (candidate.titleJa) {
+        if (candidate.bookmarkId)
+          await ctx.db
+            .update(bookmarks)
+            .set({ title: candidate.titleJa })
+            .where(
+              and(
+                eq(bookmarks.id, candidate.bookmarkId),
+                eq(bookmarks.userId, ctx.user.id),
+                sql`${bookmarks.title} IS NULL`,
+              ),
+            );
+        return;
+      }
+      if (
+        candidate.digestStatus === "pending" &&
+        candidate.translationRequestedAt &&
+        Date.now() - candidate.translationRequestedAt.getTime() < 5 * 60_000
+      )
+        return;
+      if (!InferenceClientFactory.build())
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "翻訳サービスが設定されていません",
+        });
+      const claimed = await ctx.db
+        .update(recCandidates)
+        .set({ digestStatus: "pending", translationRequestedAt: new Date() })
+        .where(
+          and(
+            eq(recCandidates.id, candidate.id),
+            sql`(${recCandidates.digestStatus} IS NOT 'pending' OR ${recCandidates.translationRequestedAt} IS NULL OR ${recCandidates.translationRequestedAt} < ${Math.floor((Date.now() - 5 * 60_000) / 1000)})`,
+          ),
+        )
+        .returning({ id: recCandidates.id });
+      if (!claimed.length) return;
+      try {
+        await RecommenderQueue.enqueue(
+          { type: "translate", userId: ctx.user.id, candidateId: candidate.id },
+          { groupId: ctx.user.id },
+        );
+      } catch (error) {
+        await ctx.db
+          .update(recCandidates)
+          .set({ digestStatus: "failure" })
+          .where(eq(recCandidates.id, candidate.id));
+        throw error;
+      }
+    }),
+
   /**
    * 即時イベントの記録（FR-F-01）。イベントは削除せず、取り消しも新しい
    * イベントとして追記する。
@@ -412,6 +522,19 @@ export const recommenderAppRouter = router({
       });
       if (!impression) {
         return;
+      }
+
+      if (
+        input.bookmarkId &&
+        !(await ctx.db.query.bookmarks.findFirst({
+          where: and(
+            eq(bookmarks.id, input.bookmarkId),
+            eq(bookmarks.userId, ctx.user.id),
+          ),
+          columns: { id: true },
+        }))
+      ) {
+        throw new TRPCError({ code: "NOT_FOUND" });
       }
 
       await ctx.db

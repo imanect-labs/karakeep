@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Image from "next/image";
+import Link from "next/link";
+import { isEnglishArticle } from "@karakeep/shared/briefing";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
@@ -9,6 +12,8 @@ import {
   FlaskConical,
   Heart,
   Languages,
+  Loader2,
+  BookOpen,
   X as XIcon,
 } from "lucide-react";
 
@@ -22,6 +27,10 @@ export interface BriefingItem {
   summary: string | null;
   titleJa: string | null;
   summaryJa: string | null;
+  imageUrl: string | null;
+  lang: string | null;
+  translationStatus: "pending" | "success" | "failure" | "skipped" | null;
+  previewPending: boolean;
   domain: string | null;
   domainStatus: string | null;
   isTrialDomain: boolean;
@@ -51,6 +60,7 @@ export default function BriefingCard({
   onDismiss,
   onViewed,
   busy,
+  translating = false,
 }: {
   item: BriefingItem;
   onOpen: () => void;
@@ -60,8 +70,9 @@ export default function BriefingCard({
   onDismiss: () => void;
   onViewed: () => void;
   busy: boolean;
+  translating?: boolean;
 }) {
-  const ref = useRef<HTMLElement>(null);
+  const ref = useRef<HTMLDivElement>(null);
   const reported = useRef(false);
 
   // FR-U-08: 50% 以上・1 秒以上入ったら viewed。この 2 条件が examined の
@@ -75,7 +86,7 @@ export default function BriefingCard({
     let timer: ReturnType<typeof setTimeout> | null = null;
     const observer = new IntersectionObserver(
       ([entry]) => {
-        if (entry.isIntersecting) {
+        if (entry.isIntersecting && entry.intersectionRatio >= 0.5) {
           timer ??= setTimeout(() => {
             if (!reported.current) {
               reported.current = true;
@@ -100,11 +111,14 @@ export default function BriefingCard({
   }, [onViewed]);
 
   const savedEvent = item.events.includes("saved");
-  const readIntent = item.events.includes("read_intent");
+  const english = isEnglishArticle(item);
+  const translationPending =
+    translating || item.translationStatus === "pending";
+  const [imageFailed, setImageFailed] = useState(false);
+  useEffect(() => setImageFailed(false), [item.imageUrl]);
   // ブックマークがあるだけでは「保存した」と言えない。「訳して読む」でも
   // ブックマークは作られるので、bookmarkId を保存の証拠にすると
   // 訳しただけの記事が「保存済み」と表示される。
-  const inLibrary = savedEvent || readIntent || !!item.bookmarkId;
   const liked = item.events.includes("liked");
   const dismissed = item.events.includes("dismissed");
   const armLabel = item.arm ? ARM_LABELS[item.arm] : "";
@@ -152,152 +166,213 @@ export default function BriefingCard({
 
   return (
     <article
-      ref={ref}
       className={cn(
-        "flex flex-col gap-3 rounded-md border bg-background p-4 transition-opacity",
+        "group overflow-hidden rounded-2xl border bg-background shadow-sm transition-[box-shadow,opacity] hover:shadow-md",
         dismissed && "opacity-40",
       )}
     >
-      <div className="flex items-start justify-between gap-3">
-        {/*
+      <a
+        href={item.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={onOpen}
+        tabIndex={-1}
+        aria-hidden="true"
+        className="relative block aspect-[1.91/1] overflow-hidden bg-gradient-to-br from-muted via-muted/70 to-primary/10"
+      >
+        {item.imageUrl && !imageFailed ? (
+          <Image
+            src={item.imageUrl}
+            alt=""
+            width={1200}
+            height={630}
+            unoptimized
+            loading="lazy"
+            referrerPolicy="no-referrer"
+            onError={() => setImageFailed(true)}
+            className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.025]"
+          />
+        ) : (
+          <div className="flex h-full items-end justify-between p-6 text-muted-foreground/60 sm:p-8">
+            <span className="max-w-[85%] break-words text-3xl font-semibold tracking-tight sm:text-4xl">
+              {item.domain ?? "Briefing"}
+            </span>
+            <BookOpen className="size-8 shrink-0 opacity-40" />
+          </div>
+        )}
+      </a>
+      <div className="flex flex-col gap-4 p-5 sm:p-6">
+        <div ref={ref} className="flex items-start justify-between gap-3">
+          {/*
           min-w-0 が無いと flex の子は既定で内容幅より縮まないので、長い
           タイトルや (title が null のときの) URL が画面外へはみ出す。
           スマホで「見づらい」の最大の原因はこれ。break-words と対で要る。
         */}
-        <div className="flex min-w-0 flex-col gap-1">
-          <a
-            href={item.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={onOpen}
-            className="break-words text-lg font-medium hover:underline"
-          >
-            {headline}
-          </a>
-          {subtitle && (
-            <p className="break-words text-xs text-muted-foreground/80">
-              {subtitle}
+          <div className="flex min-w-0 flex-col gap-1">
+            <a
+              href={item.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={onOpen}
+              className="break-words text-xl font-semibold leading-snug tracking-tight hover:underline sm:text-2xl"
+            >
+              {headline}
+            </a>
+            {subtitle && (
+              <p className="break-words text-xs text-muted-foreground/80">
+                {subtitle}
+              </p>
+            )}
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground sm:text-xs">
+              {item.domain && <span className="break-all">{item.domain}</span>}
+              {item.publishedAt && (
+                <span>{new Date(item.publishedAt).toLocaleDateString()}</span>
+              )}
+              {item.clusterLabel && (
+                <span className="rounded bg-muted px-1.5 py-0.5">
+                  {item.clusterLabel}
+                </span>
+              )}
+              {item.isTrialDomain && (
+                <span className="flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+                  <FlaskConical className="size-3" />
+                  試用中の情報源
+                </span>
+              )}
+            </div>
+          </div>
+          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+            #{item.rank}
+          </span>
+        </div>
+
+        {summary && (
+          <div className="flex flex-col items-start gap-1">
+            <p
+              ref={summaryRef}
+              className={cn(
+                "break-words text-[0.9375rem] text-muted-foreground sm:text-sm",
+                !summaryExpanded && "line-clamp-4",
+              )}
+            >
+              {summary}
             </p>
-          )}
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground sm:text-xs">
-            {item.domain && <span className="break-all">{item.domain}</span>}
-            {item.publishedAt && (
-              <span>{new Date(item.publishedAt).toLocaleDateString()}</span>
-            )}
-            {item.clusterLabel && (
-              <span className="rounded bg-muted px-1.5 py-0.5">
-                {item.clusterLabel}
-              </span>
-            )}
-            {item.isTrialDomain && (
-              <span className="flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-amber-900 dark:bg-amber-950 dark:text-amber-200">
-                <FlaskConical className="size-3" />
-                試用中の情報源
-              </span>
+            {summaryOverflows && (
+              <button
+                type="button"
+                onClick={() => setSummaryExpanded((v) => !v)}
+                className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+              >
+                {summaryExpanded ? "折りたたむ" : "続きを読む"}
+              </button>
             )}
           </div>
-        </div>
-        <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-          #{item.rank}
-        </span>
-      </div>
+        )}
 
-      {summary && (
-        <div className="flex flex-col items-start gap-1">
-          <p
-            ref={summaryRef}
-            className={cn(
-              "break-words text-[0.9375rem] text-muted-foreground sm:text-sm",
-              !summaryExpanded && "line-clamp-4",
-            )}
-          >
-            {summary}
+        {item.translationStatus === "failure" && english && (
+          <p role="status" className="text-sm text-muted-foreground">
+            翻訳できませんでした。もう一度お試しください。
           </p>
-          {summaryOverflows && (
-            <button
-              type="button"
-              onClick={() => setSummaryExpanded((v) => !v)}
-              className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
-            >
-              {summaryExpanded ? "折りたたむ" : "続きを読む"}
-            </button>
-          )}
-        </div>
-      )}
+        )}
+        <p className="break-words text-xs leading-relaxed text-muted-foreground">
+          {item.reason}
+          {armLabel && `（${armLabel}）`}
+        </p>
 
-      <p className="break-words text-sm italic text-muted-foreground sm:text-xs">
-        {item.reason}
-        {armLabel && `（${armLabel}）`}
-      </p>
-
-      {/*
-        スマホでは 4 つのボタンが中途半端に折り返して押しにくいので 2 列に
+        {/*
+        スマホではアクションが中途半端に折り返して押しにくいので 2 列に
         並べ、タップ領域を 44px 確保する (sm の h-9 = 36px は指には小さい)。
       */}
-      <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
-        <Button
-          variant="outline"
-          size="sm"
-          asChild
-          onClick={onOpen}
-          className="h-11 gap-1 sm:h-9"
-        >
-          <a href={item.url} target="_blank" rel="noopener noreferrer">
-            <ExternalLink className="size-4" />
-            開く
-          </a>
-        </Button>
-        {/*
+        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+          <Button
+            variant="outline"
+            size="sm"
+            asChild
+            onClick={onOpen}
+            className="h-11 gap-1 sm:h-9"
+          >
+            <a href={item.url} target="_blank" rel="noopener noreferrer">
+              <ExternalLink className="size-4" />
+              開く
+            </a>
+          </Button>
+          {/*
           FR-U-14: 「訳して読む」と「保存」を分ける。
           保存は全イベント中で最も重い正例 (1.2) なので、日本語で読みたい
           だけの記事にそれが付くと興味の重心が実態から離れる。
           こちらはブックマークを作る (翻訳がブックマーク単位のワーカーなので
           必要) が、記録するのは中立の read_intent だけ。
         */}
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={busy || inLibrary}
-          onClick={onReadTranslated}
-          className="h-11 gap-1 sm:h-9"
-        >
-          <Languages className="size-4" />
-          {readIntent && !savedEvent ? "取り込み済み" : "訳して読む"}
-        </Button>
-        <Button
-          variant={savedEvent ? "default" : "outline"}
-          size="sm"
-          disabled={busy || savedEvent}
-          onClick={onSave}
-          className="h-11 gap-1 sm:h-9"
-        >
-          <Bookmark className="size-4" />
-          {savedEvent ? "保存済み" : "保存"}
-        </Button>
-        <Button
-          variant={liked ? "default" : "outline"}
-          size="sm"
-          disabled={busy}
-          onClick={onLike}
-          className="h-11 gap-1 sm:h-9"
-        >
-          <Heart className="size-4" />
-          いいね
-        </Button>
-        {/*
+          {english &&
+            (item.titleJa && item.bookmarkId ? (
+              <Button
+                variant="outline"
+                size="sm"
+                asChild
+                className="h-11 gap-1.5 sm:h-9"
+              >
+                <Link href={`/dashboard/preview/${item.bookmarkId}`}>
+                  <Languages className="size-4" />
+                  日本語で読む
+                </Link>
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={busy || translationPending}
+                onClick={onReadTranslated}
+                className="h-11 gap-1.5 sm:h-9"
+              >
+                {translationPending ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Languages className="size-4" />
+                )}
+                {translationPending
+                  ? "翻訳中…"
+                  : item.translationStatus === "failure"
+                    ? "翻訳を再試行"
+                    : item.titleJa
+                      ? "日本語で読む"
+                      : "日本語に翻訳"}
+              </Button>
+            ))}
+          <Button
+            variant={savedEvent ? "default" : "outline"}
+            size="sm"
+            disabled={busy || savedEvent}
+            onClick={onSave}
+            className="h-11 gap-1 sm:h-9"
+          >
+            <Bookmark className="size-4" />
+            {savedEvent ? "保存済み" : "保存"}
+          </Button>
+          <Button
+            variant={liked ? "default" : "outline"}
+            size="sm"
+            disabled={busy}
+            onClick={onLike}
+            className="h-11 gap-1 sm:h-9"
+          >
+            <Heart className="size-4" />
+            いいね
+          </Button>
+          {/*
           FR-U-05: 「興味なし」は 1 クリックで完了させる。理由の選択は任意。
           明示的な負例はこれしか取れないので、押すコストを最小にする。
         */}
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={busy || dismissed}
-          onClick={onDismiss}
-          className="col-span-2 h-11 gap-1 text-muted-foreground sm:col-span-1 sm:h-9"
-        >
-          <XIcon className="size-4" />
-          {dismissed ? "興味なしにした" : "興味なし"}
-        </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={busy || dismissed}
+            onClick={onDismiss}
+            className="col-span-2 h-11 gap-1 text-muted-foreground sm:col-span-1 sm:h-9"
+          >
+            <XIcon className="size-4" />
+            {dismissed ? "興味なしにした" : "興味なし"}
+          </Button>
+        </div>
       </div>
     </article>
   );

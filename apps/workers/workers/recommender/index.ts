@@ -36,6 +36,8 @@ import { runMaintain } from "./maintain";
 import { runRank } from "./rank";
 import { recommenderUserIds } from "./shared";
 import { runTrain } from "./train";
+import { runArticlePreviews } from "./preview";
+import { runArticleTranslation } from "./translate";
 
 /**
  * 日次パイプラインの本体。`discover` → `collect` → `embed` → `rank` の順に
@@ -53,6 +55,24 @@ async function runRecommenderTask(job: DequeuedJob<ZRecommenderTask>) {
   });
 
   switch (task.type) {
+    case "preview": {
+      await runArticlePreviews(
+        task.userId,
+        task.briefingId,
+        jobId,
+        job.abortSignal,
+      );
+      return;
+    }
+    case "translate": {
+      await runArticleTranslation(
+        task.userId,
+        task.candidateId,
+        jobId,
+        job.abortSignal,
+      );
+      return;
+    }
     case "collect": {
       const result = await runCollect(task.userId, jobId);
       addLogFields<"recommenderWorker.run">({
@@ -226,7 +246,10 @@ function scheduleDaily(
   expression: string,
   // digest は rank が briefingId 付きで投入するので、cron からは呼べない。
   // bootstrap と enroll は登録時に 1 度だけ走る初期化なので同じく除く。
-  type: Exclude<ZRecommenderTask["type"], "bootstrap" | "digest" | "enroll">,
+  type: Exclude<
+    ZRecommenderTask["type"],
+    "bootstrap" | "digest" | "enroll" | "preview" | "translate"
+  >,
 ) {
   return cron.schedule(
     expression,

@@ -1555,6 +1555,9 @@ export const recCandidates = sqliteTable(
     }),
     // プロンプトやモデルを替えたら再生成できるように、生成に使ったモデルを持つ。
     digestModelId: text("digestModelId"),
+    translationRequestedAt: integer("translationRequestedAt", {
+      mode: "timestamp",
+    }),
 
     embedding: blob("embedding", { mode: "buffer" }),
     // 埋め込みモデルを差し替えたら再計算が要る。混在を検出できるように
@@ -1864,9 +1867,9 @@ export const recModels = sqliteTable(
  * 5 人が同じ収集元を使えば同じ記事を 5 回訳し 5 回埋め込むことになる。
  * ローカル LLM は concurrency 1 で回しているので、そこが朝の律速になる。
  *
- * 読み出しの正本は `recCandidates` のまま。ここは cache-aside で、
- * `embed` / `digest` が生成前に引き、生成後に書くだけ。ランキングも UI も
- * この表を知らない。
+ * 埋め込みと訳文の読み出しの正本は `recCandidates` のまま。ここは
+ * `embed` / `digest` の cache-aside として使う。公開記事の OGP 画像は
+ * `preview` が収集し、Briefing API がこの表から直接読み出す。
  *
  * プライバシー: 書き込むのは `origin='collected'` の候補由来のものだけ。
  * `origin='bootstrap'` は本人のブックマークなので、`urlHash` の行が在ること
@@ -1879,6 +1882,10 @@ export const recArticleCache = sqliteTable(
     urlHash: text("urlHash").notNull().primaryKey(),
     // 調査用。キャッシュの引き当てには使わない。
     canonicalUrl: text("canonicalUrl").notNull(),
+
+    // Public article previews, shared only for collected source articles.
+    imageUrl: text("imageUrl"),
+    previewFetchedAt: integer("previewFetchedAt", { mode: "timestamp" }),
 
     titleJa: text("titleJa"),
     summaryJa: text("summaryJa"),

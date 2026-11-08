@@ -214,6 +214,17 @@ export async function runRank(
     .where(eq(recBriefings.id, briefingId));
 
   await enqueueDigest(userId, briefingId, date, jobId);
+  await RecommenderQueue.enqueue(
+    { type: "preview", userId, briefingId },
+    {
+      groupId: userId,
+      idempotencyKey: `rec:preview:${briefingId}`,
+    },
+  ).catch((error) =>
+    logger.warn(
+      `[recommender][preview][${jobId}] enqueue failed: ${String(error)}`,
+    ),
+  );
 
   log(
     `selected ${selections.length}, logged ${shadowCount} unshown candidates`,
