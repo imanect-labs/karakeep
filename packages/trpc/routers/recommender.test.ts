@@ -1,8 +1,19 @@
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
-import { recSources } from "@karakeep/db/schema";
+import {
+  recSources,
+  recCandidates,
+  recBriefings,
+  recImpressions,
+  recArticleCache,
+  recFeedbackEvents,
+  users,
+  bookmarks,
+} from "@karakeep/db/schema";
 import { SEED_SOURCES } from "@karakeep/recommender";
+import { InferenceClientFactory } from "@karakeep/shared/inference";
+import { BookmarkTypes } from "@karakeep/shared/types/bookmarks";
 
 import type { CustomTestContext } from "../testUtils";
 import { defaultBeforeEach } from "../testUtils";
@@ -21,7 +32,160 @@ async function enqueueSpy() {
 
 // 呼び出し回数はモジュール単位で溜まる。テスト間で持ち越さない。
 beforeEach(async () => {
-  (await enqueueSpy()).mockClear();
+  (await enqueueSpy()).mockClear().mockResolvedValue(undefined);
+});
+
+describe("Briefing previews and translation", () => {
+  async function candidate(db: CustomTestContext["db"]) {
+    const [owner] = await db.select().from(users);
+    await db.insert(recCandidates).values({
+      id: "candidate",
+      userId: owner.id,
+      url: "https://example.com/article",
+      canonicalUrl: "https://example.com/article",
+      urlHash: "hash",
+      title: "PostgreSQL concurrency control",
+      lang: "en",
+    });
+    return owner;
+  }
+
+  test<CustomTestContext>("returns cached OGP images without recreating impressions", async ({
+    db,
+    apiCallers,
+  }) => {
+    const owner = await candidate(db);
+    await db.insert(recBriefings).values({
+      id: "briefing",
+      userId: owner.id,
+      briefingDate: "2026-11-09",
+      status: "ready",
+    });
+    await db.insert(recImpressions).values({
+      id: "impression",
+      userId: owner.id,
+      briefingId: "briefing",
+      candidateId: "candidate",
+      rank: 1,
+      shown: true,
+    });
+    await db.insert(recArticleCache).values({
+      urlHash: "hash",
+      canonicalUrl: "https://example.com/article",
+      imageUrl: "https://example.com/og.png",
+      previewFetchedAt: new Date(),
+    });
+    const briefing = await apiCallers[0].recommender.getBriefing({});
+    expect(briefing.items[0]).toMatchObject({
+      impressionId: "impression",
+      imageUrl: "https://example.com/og.png",
+      previewPending: false,
+      lang: "en",
+    });
+    expect(await db.select().from(recImpressions)).toHaveLength(1);
+  });
+
+  test<CustomTestContext>("queues requested title translation once without creating positive feedback", async ({
+    db,
+    apiCallers,
+  }) => {
+    await candidate(db);
+    const client = vi
+      .spyOn(InferenceClientFactory, "build")
+      .mockReturnValue({} as ReturnType<typeof InferenceClientFactory.build>);
+    try {
+      await apiCallers[0].recommender.translateArticle({
+        candidateId: "candidate",
+      });
+      await apiCallers[0].recommender.translateArticle({
+        candidateId: "candidate",
+      });
+      expect(await enqueueSpy()).toHaveBeenCalledTimes(1);
+      expect(await enqueueSpy()).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "translate",
+          candidateId: "candidate",
+        }),
+        expect.any(Object),
+      );
+      expect(await db.select().from(recFeedbackEvents)).toHaveLength(0);
+    } finally {
+      client.mockRestore();
+    }
+  });
+
+  test<CustomTestContext>("rejects translation and bookmark associations belonging to other users", async ({
+    db,
+    apiCallers,
+  }) => {
+    const owner = await candidate(db);
+    await expect(
+      apiCallers[1].recommender.translateArticle({ candidateId: "candidate" }),
+    ).rejects.toThrow();
+    const [, other] = await db.select().from(users);
+    await db.insert(bookmarks).values({
+      id: "other-bookmark",
+      userId: other.id,
+      type: BookmarkTypes.LINK,
+    });
+    await db
+      .insert(recImpressions)
+      .values({ id: "impression", userId: owner.id, candidateId: "candidate" });
+    await expect(
+      apiCallers[0].recommender.recordEvent({
+        impressionId: "impression",
+        eventType: "read_intent",
+        bookmarkId: "other-bookmark",
+      }),
+    ).rejects.toThrow();
+    expect(await db.select().from(recFeedbackEvents)).toHaveLength(0);
+  });
+
+  test<CustomTestContext>("allows retrying a stale pending request", async ({
+    db,
+    apiCallers,
+  }) => {
+    await candidate(db);
+    await db
+      .update(recCandidates)
+      .set({ digestStatus: "pending", translationRequestedAt: new Date(0) });
+    const client = vi
+      .spyOn(InferenceClientFactory, "build")
+      .mockReturnValue({} as ReturnType<typeof InferenceClientFactory.build>);
+    try {
+      await apiCallers[0].recommender.translateArticle({
+        candidateId: "candidate",
+      });
+      expect(await enqueueSpy()).toHaveBeenCalledOnce();
+    } finally {
+      client.mockRestore();
+    }
+  });
+
+  test<CustomTestContext>("reuses cached titles in the reader while preserving user-edited titles", async ({
+    db,
+    apiCallers,
+  }) => {
+    const owner = await candidate(db);
+    await db
+      .insert(bookmarks)
+      .values({ id: "b", userId: owner.id, type: BookmarkTypes.LINK });
+    await db
+      .update(recCandidates)
+      .set({ bookmarkId: "b", titleJa: "並行性の制御" });
+    await apiCallers[0].recommender.translateArticle({
+      candidateId: "candidate",
+    });
+    expect((await db.select().from(bookmarks))[0].title).toBe("並行性の制御");
+    await db.update(bookmarks).set({ title: "自分で付けたタイトル" });
+    await apiCallers[0].recommender.translateArticle({
+      candidateId: "candidate",
+    });
+    expect((await db.select().from(bookmarks))[0].title).toBe(
+      "自分で付けたタイトル",
+    );
+    expect(await enqueueSpy()).not.toHaveBeenCalled();
+  });
 });
 
 describe("recommender enrollment", () => {

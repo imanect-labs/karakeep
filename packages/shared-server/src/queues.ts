@@ -205,6 +205,16 @@ export const zRecommenderTaskSchema = z.discriminatedUnion("type", [
   }),
   z.object({ type: z.literal("train"), userId: z.string() }),
   z.object({ type: z.literal("reward_join"), userId: z.string() }),
+  z.object({
+    type: z.literal("preview"),
+    userId: z.string(),
+    briefingId: z.string(),
+  }),
+  z.object({
+    type: z.literal("translate"),
+    userId: z.string(),
+    candidateId: z.string(),
+  }),
   // 候補の expire / purge、取得頻度の層の振り直し、観測状態の確定。
   z.object({ type: z.literal("maintain"), userId: z.string() }),
   // 既存ブックマークを候補プールへ取り込む初期化（FR-F-04）。
