@@ -87,9 +87,17 @@ export function halfLifeWeight(
  * 「この impression を出したときのプロフィールは今と同じか」だけが分かれば、
  * 特徴量スナップショットと突き合わせてリークを検出できる。
  */
-export function profileHash(profiles: Profiles): string {
+export function profileHash(
+  profiles: Profiles,
+  explicitTopics: Float32Array[] = [],
+): string {
   const hash = createHash("sha256");
-  for (const vector of [profiles.stable, profiles.recent, profiles.negative]) {
+  for (const vector of [
+    profiles.stable,
+    profiles.recent,
+    profiles.negative,
+    ...explicitTopics,
+  ]) {
     if (!vector) {
       hash.update("null");
       continue;

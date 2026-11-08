@@ -1,7 +1,10 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Compass } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 
 import { useTRPC } from "@karakeep/shared-react/trpc";
 
@@ -29,6 +32,8 @@ export default function InterestPanel() {
         <Compass className="size-4" />
         興味の現在地
       </h2>
+
+      <ExplicitTopicsForm topics={state.data.explicitTopics} />
 
       {topClusters.length > 0 && (
         <div className="flex flex-col gap-1">
@@ -95,5 +100,76 @@ export default function InterestPanel() {
         <span className="tabular-nums">{state.data.candidatePoolSize} 件</span>
       </div>
     </section>
+  );
+}
+
+function ExplicitTopicsForm({ topics }: { topics: string[] }) {
+  const api = useTRPC();
+  const queryClient = useQueryClient();
+  const [text, setText] = useState(topics.join("\n"));
+  const save = useMutation(
+    api.recommender.setExplicitTopics.mutationOptions({
+      onSuccess: ({ topics: saved }) => {
+        setText(saved.join("\n"));
+        void queryClient.invalidateQueries(
+          api.recommender.getInterestState.pathFilter(),
+        );
+      },
+    }),
+  );
+  const values = text
+    .split("\n")
+    .map((t) => t.trim())
+    .filter(Boolean);
+  const invalid = values.length > 12 || values.some((t) => t.length > 200);
+  return (
+    <form
+      className="flex flex-col gap-2"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!invalid) save.mutate({ topics: values });
+      }}
+    >
+      <label
+        htmlFor="briefing-explicit-topics"
+        className="text-xs text-muted-foreground"
+      >
+        関心のあるトピック
+      </label>
+      <Textarea
+        id="briefing-explicit-topics"
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+        disabled={save.isPending}
+        rows={3}
+        placeholder={"インフラ・分散システム\nOS・カーネルなどの低レイヤー"}
+      />
+      <p className="text-xs text-muted-foreground">
+        1行に1つ，12件まで。次回のBriefingから反映します。空にして保存すると解除できます。
+      </p>
+      {invalid && (
+        <p role="alert" className="text-xs text-destructive">
+          12件以内，各200文字以内で入力してください。
+        </p>
+      )}
+      {save.isError && (
+        <p role="alert" className="text-xs text-destructive">
+          保存できませんでした。もう一度お試しください。
+        </p>
+      )}
+      {save.isSuccess && (
+        <p role="status" className="text-xs text-muted-foreground">
+          保存しました。
+        </p>
+      )}
+      <Button
+        type="submit"
+        size="sm"
+        variant="outline"
+        disabled={invalid || save.isPending}
+      >
+        保存
+      </Button>
+    </form>
   );
 }

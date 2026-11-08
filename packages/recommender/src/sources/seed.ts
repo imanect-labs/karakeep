@@ -125,6 +125,28 @@ export const SEED_SOURCES: readonly SeedSource[] = [
   },
 
   // --- 個人 / 深い技術 ----------------------------------------------------
+  // Infrastructure and low-level coverage. Feed reachability and entries were
+  // checked on 2026-11-09; these remain general supply, not feedback events.
+  {
+    name: "Phoronix",
+    kind: "rss",
+    config: { feedUrl: "https://www.phoronix.com/rss.php" },
+  },
+  {
+    name: "Collabora Blog",
+    kind: "rss",
+    config: { feedUrl: "https://www.collabora.com/feed/" },
+  },
+  {
+    name: "Tailscale Blog",
+    kind: "rss",
+    config: { feedUrl: "https://tailscale.com/blog/index.xml" },
+  },
+  {
+    name: "Fly.io Blog",
+    kind: "rss",
+    config: { feedUrl: "https://fly.io/blog/feed.xml" },
+  },
   {
     name: "Simon Willison",
     kind: "rss",

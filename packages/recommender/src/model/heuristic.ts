@@ -142,6 +142,7 @@ export function scoreHeuristic(
  */
 export function explainScore(score: HeuristicScore): string {
   const labels: Record<string, [string, string]> = {
+    explicitTopics: ["指定した関心のあるトピックに近い", ""],
     stable: ["これまで反応した記事群と意味的に近い", "これまでの関心から遠い"],
     recent: ["直近よく読んでいるテーマに近い", "直近の関心からは外れている"],
     negative: ["", "「興味なし」にした記事に似ている"],

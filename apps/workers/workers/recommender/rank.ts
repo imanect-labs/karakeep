@@ -12,6 +12,7 @@ import {
 } from "@karakeep/db/schema";
 import type { ArmShares, RankableCandidate } from "@karakeep/recommender";
 import {
+  applyExplicitTopics,
   clusterPreferenceLookup,
   deserializeVector,
   explainScore,
@@ -36,6 +37,7 @@ import {
 } from "./shared";
 
 export const MODEL_VERSION_HEURISTIC = "heuristic-v1";
+export const MODEL_VERSION_TOPICS = "heuristic-v1+explicit-topics";
 export const MODEL_VERSION_FALLBACK = "fallback";
 
 /** 提示されなかった候補も上位これだけは記録する（FR-R-05）。 */
@@ -131,7 +133,7 @@ export async function runRank(
     const embedding = candidate.embedding
       ? deserializeVector(candidate.embedding)
       : null;
-    const result = scoreHeuristic(
+    const base = scoreHeuristic(
       {
         embedding,
         publishedAt: candidate.publishedAt,
@@ -152,6 +154,13 @@ export async function runRank(
       bundle.profiles,
       now,
     );
+    const result = applyExplicitTopics(
+      base,
+      embedding,
+      candidate.embeddingModelId === bundle.explicitTopicModelId
+        ? bundle.explicitTopicVectors
+        : [],
+    );
     const shadowFeatures: Record<string, number> = {};
     if (shadow && shadowWeights) {
       const score = pairwiseScore(result.contributions, shadowWeights);
@@ -170,6 +179,11 @@ export async function runRank(
     isTrialDomain: candidate.domainStatus === "trial",
     profileIndependent: candidate.profileIndependent ?? false,
   }));
+  const modelVersion = scored.some(
+    (s) => "explicitTopics" in s.result.contributions,
+  )
+    ? MODEL_VERSION_TOPICS
+    : MODEL_VERSION_HEURISTIC;
 
   // Thompson Sampling の重みサンプルは 1 Briefing につき 1 回だけ引く
   // （FR-R-03b）。学習前は乱数の種を日付で固定することが同じ役割を果たし、
@@ -209,7 +223,7 @@ export async function runRank(
       status: "ready",
       itemCount: selections.length,
       generatedAt: now,
-      modelVersion: MODEL_VERSION_HEURISTIC,
+      modelVersion,
     })
     .where(eq(recBriefings.id, briefingId));
 
@@ -231,7 +245,7 @@ export async function runRank(
   );
   return {
     briefingId,
-    modelVersion: MODEL_VERSION_HEURISTIC,
+    modelVersion,
     shown: selections.length,
     shadow: shadowCount,
     candidatesConsidered: candidates.length,
@@ -353,6 +367,7 @@ async function loadRankableCandidates(userId: string) {
       clusterId: recCandidates.clusterId,
       domainId: recCandidates.domainId,
       embedding: recCandidates.embedding,
+      embeddingModelId: recCandidates.embeddingModelId,
       domainStatus: recDomains.status,
       betaAlpha: recDomains.betaAlpha,
       betaBeta: recDomains.betaBeta,
@@ -400,7 +415,10 @@ async function writeImpressions(
         score: scored.result.score,
         uncertainty: scored.result.uncertainty,
         propensity: selection.propensity,
-        modelVersion: MODEL_VERSION_HEURISTIC,
+        modelVersion:
+          "explicitTopics" in scored.result.contributions
+            ? MODEL_VERSION_TOPICS
+            : MODEL_VERSION_HEURISTIC,
         features: {
           ...scored.result.contributions,
           ...scored.shadowFeatures,
@@ -451,7 +469,10 @@ async function writeShadowImpressions(
       uncertainty: s.result.uncertainty,
       // 選ばれなかったので、この候補の選出確率は記録できない。
       propensity: null,
-      modelVersion: MODEL_VERSION_HEURISTIC,
+      modelVersion:
+        "explicitTopics" in s.result.contributions
+          ? MODEL_VERSION_TOPICS
+          : MODEL_VERSION_HEURISTIC,
       features: { ...s.result.contributions, ...s.shadowFeatures },
       featureSchemaVersion: MODEL_VERSION_HEURISTIC,
       profileHash: profileHashValue,
