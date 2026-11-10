@@ -14,3 +14,6 @@
 - Deployment follow-up: switch monitoring to time() minus this gauge after the
   image is deployed, verify the latest DB generation time and resolved alert.
   Do not regenerate existing briefings or synthesize increments for recovery.
+- CI recovery: no Actions run was created for the initial PR event or reopening,
+  despite the CI workflow being active. Add workflow_dispatch so the same five
+  checks can be explicitly triggered on the branch without changing job logic.

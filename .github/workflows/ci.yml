@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   pull_request:
     # `*` は `/` にマッチしない（GitHub のフィルタパターン仕様）。upstream は
     # 常に main を base にするので気づかないが、fork のように
