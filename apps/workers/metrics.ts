@@ -1,5 +1,8 @@
 import { prometheus } from "@hono/prometheus";
-import { Counter, Histogram, Registry } from "prom-client";
+import { Counter, Gauge, Histogram, Registry } from "prom-client";
+import { eq, max } from "drizzle-orm";
+import { db } from "@karakeep/db";
+import { recBriefings } from "@karakeep/db/schema";
 
 export const registry = new Registry();
 
@@ -48,6 +51,20 @@ export const recommenderBriefingsCounter = new Counter({
   labelNames: ["model_version"],
 });
 
+// Read persistent completion state on every scrape. A process counter cannot
+// distinguish its first observed value of 1 from a baseline after restart.
+export const recommenderLastBriefingTimestamp = new Gauge({
+  name: "karakeep_recommender_last_briefing_timestamp_seconds",
+  help: "Latest ready Briefing generation time from the database, or zero if none exists",
+  async collect() {
+    const [row] = await db
+      .select({ generatedAt: max(recBriefings.generatedAt) })
+      .from(recBriefings)
+      .where(eq(recBriefings.status, "ready"));
+    this.set(row.generatedAt ? row.generatedAt.getTime() / 1000 : 0);
+  },
+});
+
 export const recommenderDomainsCounter = new Counter({
   name: "karakeep_recommender_domains_total",
   help: "Domain lifecycle transitions in the recommender",
@@ -70,6 +87,7 @@ registry.registerMetric(workerStatsCounter);
 registry.registerMetric(recommenderCandidatesCounter);
 registry.registerMetric(recommenderSourceFailuresCounter);
 registry.registerMetric(recommenderBriefingsCounter);
+registry.registerMetric(recommenderLastBriefingTimestamp);
 registry.registerMetric(recommenderDomainsCounter);
 registry.registerMetric(recommenderEmbeddingsCounter);
 registry.registerMetric(recommenderDigestsCounter);
